@@ -1,24 +1,28 @@
 package com.agentforge.app
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,17 +32,24 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalContext
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.agentforge.app.agent.AgentEngine
 import com.agentforge.app.agent.AiClient
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
+import com.agentforge.app.service.VoiceListenerService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
@@ -49,20 +60,53 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         prefs = AppPrefs(this)
         shizuku = ShizukuBridge(this)
+
+        requestNeededPermissions()
+        startVoiceBackgroundService()
+
         setContent {
             AgentForgeApp(prefs, shizuku)
         }
     }
+
+    private fun requestNeededPermissions() {
+        val permissions = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.READ_PHONE_STATE
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val needed = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (needed.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, needed.toTypedArray(), 102)
+        }
+    }
+
+    private fun startVoiceBackgroundService() {
+        try {
+            val intent = Intent(this, VoiceListenerService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (_: Exception) {}
+    }
 }
 
 private val themes = listOf("neonred", "neonblue", "neongreen", "neonyellow", "neonorange", "neonwhite", "neonbrown", "neonpurple")
-private val uiStyles = listOf("Soft UI", "Brutalism / Neobrutalism", "Aero Glassmorphism", "Liquid Glass / Liquidmorphism", "Auroramorphism", "Claymorphism", "Skeuomorphism", "Glassmorphism", "Neumorphism", "Frutiger Aero", "Y2K UI", "Cyberpunk UI", "Holographic UI", "Material Design", "Fluent Design", "Metallicmorphism", "Glassmorphic Neumorphism", "Gradientmorphism", "3D Morphism", "Pixel UI", "Retro-futuristic UI", "Paper/Material Morphism", "Inflated UI")
-private val textFx = listOf("solid", "gradient", "aurora", "glow", "glass", "metalic", "holographic", "liquid", "3d", "outline")
+private val uiStyles = listOf("Soft UI", "Cyberpunk UI", "Glassmorphism", "Neumorphism", "Brutalism", "Aero Glass")
 
 @Composable
 fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val accent = when (prefs.theme) {
+    var currentTheme by remember { mutableStateOf(prefs.theme) }
+
+    val accent = when (currentTheme) {
         "neonred" -> Color(0xFFFF1744)
         "neongreen" -> Color(0xFF00FF7F)
         "neonyellow" -> Color(0xFFFFFF00)
@@ -70,262 +114,529 @@ fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
         "neonwhite" -> Color.White
         "neonbrown" -> Color(0xFFA66A3F)
         "neonpurple" -> Color(0xFFB000FF)
-        else -> Color(0xFF00A8FF)
+        else -> Color(0xFF00E5FF)
     }
 
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = accent,
-            background = Color(0xFF06070B),
-            surface = Color(0xFF10121A)
+            background = Color(0xFF08090E),
+            surface = Color(0xFF12141F),
+            surfaceVariant = Color(0xFF1B1E2E)
         )
     ) {
         Scaffold(
             bottomBar = {
-                NavigationBar {
+                NavigationBar(containerColor = Color(0xFF0D0F18)) {
                     listOf(
                         Icons.Default.Chat to "Chat",
-                        Icons.Default.Key to "API",
+                        Icons.Default.VpnKey to "API",
                         Icons.Default.Voicemail to "Voicemail",
                         Icons.Default.Settings to "Settings"
                     ).forEachIndexed { i, pair ->
                         NavigationBarItem(
                             selected = tab == i,
                             onClick = { tab = i },
-                            icon = { Icon(pair.first, contentDescription = null) },
-                            label = { Text(pair.second) }
+                            icon = { Icon(pair.first, contentDescription = pair.second) },
+                            label = { Text(pair.second, fontSize = 11.sp) }
                         )
                     }
                 }
             }
         ) { pad ->
-            Box(Modifier.padding(pad).fillMaxSize()) {
+            Box(Modifier.padding(pad).fillMaxSize().background(Color(0xFF08090E))) {
                 when (tab) {
                     0 -> ChatPage(prefs, shizuku)
                     1 -> ApiPage(prefs)
                     2 -> VoicemailPage()
-                    3 -> SettingsPage(prefs, shizuku)
+                    3 -> SettingsPage(prefs, shizuku) { currentTheme = it }
                 }
             }
         }
     }
 }
 
-@Composable
-private fun Header(title: String, action: (() -> Unit)? = null) {
-    Row(
-        Modifier.fillMaxWidth().padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-        action?.let {
-            IconButton(onClick = it) {
-                Icon(Icons.Default.DeleteSweep, contentDescription = "Delete")
-            }
-        }
-    }
-}
-
+// ---------------- TAB 1: CHAT TAB ----------------
 @Composable
 private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
     val context = LocalContext.current
     var input by remember { mutableStateOf("") }
-    var messages by remember { mutableStateOf(listOf("AgentForge: Ready. Give me a command.")) }
+    var messages by remember { mutableStateOf(listOf("${prefs.name}: Main ready hoon. Command boliye ya type kijiye.")) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
     val engine = remember { AgentEngine(context, AiClient(prefs), shizuku) }
 
-    Column(Modifier.fillMaxSize()) {
-        Header("AgentForge") { messages = emptyList() }
-        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "@edit.og_",
-                fontSize = 13.sp,
-                modifier = Modifier.clickable {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.instagram.com/edit.og_/")))
-                }
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                if (shizuku.hasPermission()) "Shizuku Active" else "Shizuku off",
-                color = MaterialTheme.colorScheme.primary,
-                fontSize = 12.sp
-            )
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        if (!spoken.isNullOrBlank()) {
+            input = spoken
         }
-        LazyColumn(Modifier.weight(1f).padding(12.dp)) {
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(prefs.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "@edit.og_",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 12.sp,
+                    modifier = Modifier.clickable {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.instagram.com/edit.og_/")))
+                    }
+                )
+            }
+            Text(
+                text = if (shizuku.hasPermission()) "● Shizuku Online" else "○ Shizuku Off",
+                color = if (shizuku.hasPermission()) Color(0xFF00FF7F) else Color(0xFFFF5252),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(end = 8.dp)
+            )
+            IconButton(onClick = { messages = emptyList() }) {
+                Icon(Icons.Default.DeleteSweep, contentDescription = "Clear Chat", tint = Color.Gray)
+            }
+        }
+
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
+        ) {
             items(messages) { msg ->
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    tonalElevation = 3.dp,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)
+                val isUser = msg.startsWith("You: ")
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
                 ) {
-                    Text(msg, Modifier.padding(14.dp))
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isUser) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else Color(0xFF141724),
+                        border = if (isUser) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                        modifier = Modifier.widthIn(max = 300.dp)
+                    ) {
+                        Text(
+                            text = msg,
+                            modifier = Modifier.padding(12.dp),
+                            color = Color.White,
+                            fontSize = 14.sp
+                        )
+                    }
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom) {
+
+        Row(
+            Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Command or question...") },
-                maxLines = 5
+                placeholder = { Text("Command ya sawal...", fontSize = 13.sp) },
+                maxLines = 3,
+                shape = RoundedCornerShape(24.dp)
             )
-            IconButton(onClick = {
-                if (SpeechRecognizer.isRecognitionAvailable(context)) {
-                    val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            Spacer(Modifier.width(6.dp))
+            IconButton(
+                onClick = {
+                    if (SpeechRecognizer.isRecognitionAvailable(context)) {
+                        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                        }
+                        speechLauncher.launch(i)
+                    } else {
+                        Toast.makeText(context, "Speech recognizer available nahi hai", Toast.LENGTH_SHORT).show()
                     }
-                    (context as? MainActivity)?.startActivity(i)
                 }
-            }) {
-                Icon(Icons.Default.Mic, contentDescription = "Voice")
+            ) {
+                Icon(Icons.Default.Mic, contentDescription = "Mic", tint = MaterialTheme.colorScheme.primary)
             }
             IconButton(
-                enabled = !busy,
+                enabled = !busy && input.isNotBlank(),
                 onClick = {
-                    val c = input.trim()
-                    if (c.isNotEmpty()) {
-                        messages = messages + "You: $c"
+                    val cmd = input.trim()
+                    if (cmd.isNotEmpty()) {
+                        messages = messages + "You: $cmd"
                         input = ""
                         busy = true
                         scope.launch {
-                            val r = engine.execute(c)
-                            messages = messages + "Agent: $r"
+                            listState.animateScrollToItem(messages.size - 1)
+                            val res = engine.execute(cmd)
+                            messages = messages + "${prefs.name}: $res"
                             busy = false
+                            listState.animateScrollToItem(messages.size - 1)
                         }
                     }
                 }
             ) {
-                Icon(Icons.Default.Send, contentDescription = "Send")
+                Icon(Icons.Default.Send, contentDescription = "Send", tint = MaterialTheme.colorScheme.primary)
             }
         }
     }
 }
 
+// ---------------- TAB 2: API TAB ----------------
 @Composable
 private fun ApiPage(prefs: AppPrefs) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     var provider by remember { mutableStateOf(prefs.provider) }
-    var name by remember { mutableStateOf(prefs.name) }
     var key by remember { mutableStateOf(prefs.key) }
     var model by remember { mutableStateOf(prefs.model) }
     var base by remember { mutableStateOf(prefs.baseUrl) }
+    var testResult by remember { mutableStateOf<String?>(null) }
+    var isTesting by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Text("API Setup", style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(12.dp))
+        Text("API Configuration", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Gemini, OpenAI, ya OpenRouter configure karein", fontSize = 12.sp, color = Color.Gray)
+        Spacer(Modifier.height(16.dp))
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("gemini", "openrouter", "openai").forEach { p ->
                 FilterChip(
                     selected = provider == p,
-                    onClick = { provider = p },
-                    label = { Text(p) }
+                    onClick = {
+                        provider = p
+                        when (p) {
+                            "gemini" -> {
+                                model = "gemini-2.5-flash"
+                                base = "https://generativelanguage.googleapis.com"
+                            }
+                            "openai" -> {
+                                model = "gpt-4o-mini"
+                                base = "https://api.openai.com/v1"
+                            }
+                            "openrouter" -> {
+                                model = "meta-llama/llama-3.3-70b-instruct"
+                                base = "https://openrouter.ai/api/v1"
+                            }
+                        }
+                    },
+                    label = { Text(p.uppercase(Locale.ROOT)) }
                 )
             }
         }
-        OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("API name") })
-        OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), label = { Text("API key") }, visualTransformation = PasswordVisualTransformation())
-        OutlinedTextField(model, { model = it }, Modifier.fillMaxWidth(), label = { Text("Model") })
-        OutlinedTextField(base, { base = it }, Modifier.fillMaxWidth(), label = { Text("Base URL") })
-        Spacer(Modifier.height(10.dp))
-        Button(onClick = {
-            prefs.provider = provider
-            prefs.name = name
-            prefs.key = key
-            prefs.model = model
-            prefs.baseUrl = base
-        }) {
-            Text("Save API configuration")
+
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), label = { Text("API Key") }, visualTransformation = PasswordVisualTransformation())
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(model, { model = it }, Modifier.fillMaxWidth(), label = { Text("Model ID") })
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(base, { base = it }, Modifier.fillMaxWidth(), label = { Text("Base URL Endpoint") })
+        Spacer(Modifier.height(16.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    prefs.provider = provider
+                    prefs.key = key.trim()
+                    prefs.model = model.trim()
+                    prefs.baseUrl = base.trim()
+                    Toast.makeText(context, "API Settings Saved!", Toast.LENGTH_SHORT).show()
+                }
+            ) {
+                Text("Save Settings")
+            }
+
+            OutlinedButton(
+                modifier = Modifier.weight(1f),
+                enabled = !isTesting && key.isNotBlank(),
+                onClick = {
+                    isTesting = true
+                    testResult = "Connecting..."
+                    scope.launch {
+                        prefs.provider = provider
+                        prefs.key = key.trim()
+                        prefs.model = model.trim()
+                        prefs.baseUrl = base.trim()
+                        val client = AiClient(prefs)
+                        val res = withContext(Dispatchers.IO) {
+                            client.ask("Respond with ONLY one word: Connected")
+                        }
+                        testResult = res
+                        isTesting = false
+                    }
+                }
+            ) {
+                Text(if (isTesting) "Testing..." else "Test Connection")
+            }
         }
-        Text("Suggested models", Modifier.padding(top = 16.dp), style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Gemini: gemini-2.5-flash / gemini-2.5-pro\nOpenAI: gpt-4o-mini / gpt-4o\nOpenRouter: meta-llama/llama-3.3-70b-instruct",
-            Modifier.padding(top = 6.dp)
-        )
+
+        testResult?.let {
+            Spacer(Modifier.height(16.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (it.contains("Connected", true)) Color(0x2200FF7F) else Color(0x22FF5252),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Status: $it",
+                    modifier = Modifier.padding(14.dp),
+                    color = Color.White,
+                    fontSize = 13.sp
+                )
+            }
+        }
     }
 }
 
+// ---------------- TAB 3: IOS STYLE CALLER VOICEMAIL ----------------
 @Composable
 private fun VoicemailPage() {
-    var items by remember { mutableStateOf(listOf<String>()) }
-    var playing by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val audioDir = File(context.filesDir, "voicemails").apply { if (!exists()) mkdirs() }
 
-    Column(Modifier.fillMaxSize()) {
-        Header("Voicemail")
-        if (items.isEmpty()) {
+    var recordList by remember { mutableStateOf(audioDir.listFiles()?.toList() ?: emptyList()) }
+    var activePlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+    var currentlyPlayingFile by remember { mutableStateOf<String?>(null) }
+
+    fun refreshFiles() {
+        recordList = audioDir.listFiles()?.filter { it.extension == "m4a" }?.sortedByDescending { it.lastModified() } ?: emptyList()
+    }
+
+    LaunchedEffect(Unit) {
+        refreshFiles()
+    }
+
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Live Voicemail", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("Caller voice messages & recordings", fontSize = 12.sp, color = Color.Gray)
+            }
+            IconButton(onClick = { refreshFiles() }) {
+                Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        if (recordList.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("No saved voicemails yet.")
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.Voicemail, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(56.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Text("No Caller Voicemails", color = Color.Gray, fontWeight = FontWeight.SemiBold)
+                    Text("Incoming calls ke recorded voice messages yahan appear honge.", fontSize = 12.sp, color = Color.DarkGray, textAlign = TextAlign.Center)
+                }
             }
         } else {
             LazyColumn(Modifier.weight(1f)) {
-                items(items) { v ->
-                    ListItem(
-                        headlineContent = { Text(v) },
-                        trailingContent = {
-                            Row {
-                                IconButton(onClick = { playing = if (playing == v) null else v }) {
-                                    Icon(if (playing == v) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = "Play/Stop")
+                items(recordList) { file ->
+                    val isPlaying = currentlyPlayingFile == file.name
+                    val nameParts = file.nameWithoutExtension.split("_")
+                    val callerDisplay = if (nameParts.size >= 2) nameParts[1] else "Unknown Caller"
+                    val timeDisplay = if (nameParts.size >= 3) nameParts[2] else "Recent"
+
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF141724),
+                        border = if (isPlaying) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.PhoneCallback, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                    }
                                 }
-                                IconButton(onClick = { items = items - v }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(callerDisplay, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    Text("Recorded at: $timeDisplay • ${file.length() / 1024} KB", fontSize = 11.sp, color = Color.Gray)
+                                }
+                                IconButton(onClick = {
+                                    val dial = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$callerDisplay")).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(dial)
+                                }) {
+                                    Icon(Icons.Default.Call, contentDescription = "Call Back", tint = Color(0xFF00FF7F))
+                                }
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+
+                            Row(
+                                Modifier.fillMaxWidth().background(Color(0xFF0D0F18), RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        if (isPlaying) {
+                                            activePlayer?.stop()
+                                            activePlayer?.release()
+                                            activePlayer = null
+                                            currentlyPlayingFile = null
+                                        } else {
+                                            activePlayer?.release()
+                                            val mp = MediaPlayer().apply {
+                                                setDataSource(file.absolutePath)
+                                                prepare()
+                                                start()
+                                                setOnCompletionListener {
+                                                    currentlyPlayingFile = null
+                                                }
+                                            }
+                                            activePlayer = mp
+                                            currentlyPlayingFile = file.name
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlaying) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
+                                        contentDescription = "Play/Pause",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+
+                                Text(
+                                    text = if (isPlaying) "Playing voice note..." else "Tap to listen to caller message",
+                                    fontSize = 12.sp,
+                                    color = if (isPlaying) MaterialTheme.colorScheme.primary else Color.Gray,
+                                    modifier = Modifier.weight(1f)
+                                )
+
+                                IconButton(onClick = {
+                                    if (currentlyPlayingFile == file.name) {
+                                        activePlayer?.stop()
+                                        activePlayer?.release()
+                                        activePlayer = null
+                                        currentlyPlayingFile = null
+                                    }
+                                    file.delete()
+                                    refreshFiles()
+                                }) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = Color(0xFFFF5252))
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------- TAB 4: SETTINGS TAB ----------------
+@Composable
+private fun SettingsPage(
+    prefs: AppPrefs,
+    shizuku: ShizukuBridge,
+    onThemeUpdated: (String) -> Unit
+) {
+    val context = LocalContext.current
+    var assistantName by remember { mutableStateOf(prefs.name) }
+    var wakeWord by remember { mutableStateOf(prefs.wakeWord) }
+
+    var ix by remember { mutableFloatStateOf(prefs.islandX) }
+    var iy by remember { mutableFloatStateOf(prefs.islandY) }
+    var iw by remember { mutableFloatStateOf(prefs.islandWidth) }
+    var ih by remember { mutableFloatStateOf(prefs.islandHeight) }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+        Text("Assistant Settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+
+        OutlinedTextField(
+            value = assistantName,
+            onValueChange = {
+                assistantName = it
+                prefs.name = it
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Assistant Name") }
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = wakeWord,
+            onValueChange = {
+                wakeWord = it
+                prefs.wakeWord = it.lowercase(Locale.getDefault())
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Wake-Word Command (e.g. hey mira)") }
+        )
+
+        Spacer(Modifier.height(16.dp))
+        Text("System & Privileges", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    if (shizuku.hasPermission()) {
+                        val connected = shizuku.connect()
+                        Toast.makeText(context, if (connected) "Shizuku Connected!" else "Connection failed", Toast.LENGTH_SHORT).show()
+                    } else {
+                        shizuku.requestPermission()
+                    }
+                }
+            ) {
+                Text(if (shizuku.hasPermission()) "Connect Shizuku" else "Authorize Shizuku")
+            }
+            OutlinedButton(
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }
+            ) {
+                Text("Accessibility")
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Text("Color Themes", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(6.dp))
+        themes.chunked(4).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                row.forEach { t ->
+                    FilterChip(
+                        selected = prefs.theme == t,
+                        onClick = {
+                            prefs.theme = t
+                            onThemeUpdated(t)
+                        },
+                        label = { Text(t.removePrefix("neon"), fontSize = 11.sp) },
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
         }
-        Text(
-            "Carrier voicemail recording requires telecom dialer integration. This inbox serves imported local audio notes.",
-            Modifier.padding(16.dp),
-            fontSize = 12.sp
-        )
-    }
-}
 
-@Composable
-private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Text("Settings", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(16.dp))
+        Text("Dynamic Island Overlay Geometry", style = MaterialTheme.typography.titleMedium)
+        Text("Real-time persistent notch/island adjustments", fontSize = 11.sp, color = Color.Gray)
         Spacer(Modifier.height(8.dp))
-        Button(onClick = {
-            if (shizuku.hasPermission()) shizuku.connect() else shizuku.requestPermission()
-        }) {
-            Text(if (shizuku.hasPermission()) "Connect Shizuku" else "Authorize Shizuku")
-        }
-        SettingGroup("Theme color", themes, prefs.theme) { prefs.theme = it }
-        SettingGroup("UI design", uiStyles, prefs.ui) { prefs.ui = it }
-        SettingGroup("Text color / animation", textFx, prefs.textFx) { prefs.textFx = it }
-        Spacer(Modifier.height(12.dp))
-        Text("Dynamic island", style = MaterialTheme.typography.titleLarge)
-        SliderRow("X-axis", prefs.islandX, -200f, 200f) { prefs.islandX = it }
-        SliderRow("Y-axis", prefs.islandY, -200f, 500f) { prefs.islandY = it }
-        SliderRow("Width", prefs.islandWidth, 120f, 500f) { prefs.islandWidth = it }
-        SliderRow("Height", prefs.islandHeight, 28f, 120f) { prefs.islandHeight = it }
-        SliderRow("Corner rounding", prefs.islandRadius, 0f, 60f) { prefs.islandRadius = it }
+
+        SliderItem("X-Axis Offset", ix, -200f, 200f) { ix = it; prefs.islandX = it }
+        SliderItem("Y-Axis Height Offset", iy, -100f, 400f) { iy = it; prefs.islandY = it }
+        SliderItem("Island Width", iw, 100f, 450f) { iw = it; prefs.islandWidth = it }
+        SliderItem("Island Height", ih, 24f, 100f) { ih = it; prefs.islandHeight = it }
     }
 }
 
 @Composable
-private fun SettingGroup(title: String, options: List<String>, selected: String, set: (String) -> Unit) {
-    Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
-    options.chunked(2).forEach { rowList ->
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            rowList.forEach { o ->
-                FilterChip(
-                    selected = selected == o,
-                    onClick = { set(o) },
-                    label = { Text(o) },
-                    modifier = Modifier.padding(vertical = 2.dp)
-                )
-            }
-        }
+private fun SliderItem(label: String, value: Float, min: Float, max: Float, onValueChange: (Float) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("$label: ${value.toInt()}", modifier = Modifier.weight(1f), fontSize = 12.sp)
+        Slider(value = value, onValueChange = onValueChange, valueRange = min..max, modifier = Modifier.weight(1.5f))
     }
-}
-
-@Composable
-private fun SliderRow(title: String, value: Float, min: Float, max: Float, set: (Float) -> Unit) {
-    Text("$title: ${value.toInt()}")
-    Slider(value = value, onValueChange = { set(it) }, valueRange = min..max)
 }

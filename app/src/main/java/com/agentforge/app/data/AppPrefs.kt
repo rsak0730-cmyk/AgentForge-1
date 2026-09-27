@@ -4,8 +4,11 @@ import android.content.Context
 
 class AppPrefs(context: Context) {
     private val p = context.getSharedPreferences("agentforge", Context.MODE_PRIVATE)
+
     var provider: String get() = p.getString("provider", "gemini") ?: "gemini"; set(v) = p.edit().putString("provider", v).apply()
-    var name: String get() = p.getString("name", "Gemini") ?: "Gemini"; set(v) = p.edit().putString("name", v).apply()
+    var name: String get() = p.getString("name", "Mira") ?: "Mira"; set(v) = p.edit().putString("name", v).apply()
+    var wakeWord: String get() = p.getString("wake_word", "hey mira") ?: "hey mira"; set(v) = p.edit().putString("wake_word", v).apply()
+    var isSleeping: Boolean get() = p.getBoolean("is_sleeping", false); set(v) = p.edit().putBoolean("is_sleeping", v).apply()
     var key: String get() = p.getString("key", "") ?: ""; set(v) = p.edit().putString("key", v).apply()
     var model: String get() = p.getString("model", "gemini-2.5-flash") ?: "gemini-2.5-flash"; set(v) = p.edit().putString("model", v).apply()
     var baseUrl: String get() = p.getString("base", "https://generativelanguage.googleapis.com") ?: "https://generativelanguage.googleapis.com"; set(v) = p.edit().putString("base", v).apply()

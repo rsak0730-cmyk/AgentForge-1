@@ -2,176 +2,173 @@ package com.agentforge.app.agent
 
 import android.content.Context
 import android.content.Intent
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
 import android.net.Uri
 import android.provider.ContactsContract
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.service.AgentAccessibilityService
+import kotlinx.coroutines.delay
 import org.json.JSONObject
+import java.util.Locale
 
 class AgentEngine(
     private val context: Context,
     private val ai: AiClient,
     private val shizuku: ShizukuBridge
 ) {
+    private val history = mutableListOf<String>()
+    private var isTorchOn = false
 
-    suspend fun execute(userMessage: String): String {
-        val trimmed = userMessage.trim()
-        if (trimmed.isEmpty()) return "Kuch boliye ya type kijiye."
+    suspend fun execute(userQuery: String): String {
+        val trimmed = userQuery.trim()
+        if (trimmed.isEmpty()) return "Main sun raha hoon, command dijiye."
 
         val service = AgentAccessibilityService.instance
-        val screenContext = service?.getScreenUiHierarchy() ?: "Screen access inactive or no elements visible."
+        service?.showIsland("Thinking...")
 
-        val systemPrompt = """
-You are an intelligent, multilingual Android OS Agent.
-The user will talk to you in any language (English, Hindi, Bengali, Hinglish, slang, casual speech).
-Your job is to understand the user's TRUE INTENT from the conversation and decide whether it requires a physical device action or a conversational reply.
+        // Max autonomous steps limit to prevent infinite loops
+        val maxSteps = 8
+        var currentStep = 0
+        var taskCompleted = false
+        var finalFeedback = ""
 
-Current Active Screen UI Elements:
-$screenContext
+        while (currentStep < maxSteps && !taskCompleted) {
+            currentStep++
+            val screenHierarchy = service?.getIndexedScreenElements() ?: "No screen access."
+
+            val prompt = """
+You are the world's most capable Autonomous Android Agent (Mira).
+Goal: Complete the user's task on Android completely hands-free.
+
+User Task: "$trimmed"
+Step Number: $currentStep / $maxSteps
+
+Visible Screen Elements with Indexed IDs:
+$screenHierarchy
+
+Conversation Memory:
+${history.takeLast(4).joinToString("\n")}
 
 AVAILABLE ACTIONS:
-1. "home": Go to device home screen.
-2. "back": Go back to previous screen.
-3. "recents": Open recent apps overview.
-4. "play_pause": Toggle music/video playback.
-5. "scroll_down": Scroll down the active feed or page.
-6. "scroll_up": Scroll up the active feed or page.
-7. "open_app": Open an application by name (specify "target").
-8. "call": Open dialer/call contact by name or number (specify "target").
-9. "click": Tap an element on screen using visible text or content description (specify "target").
-10. "type": Input text into an active or targeted textfield (specify "target" and "text").
-11. "reply": When the user is asking a question, making small talk, or no system action is required.
+- "open_app": (param: package/app name) Launch application
+- "click_id": (param: integer ID like 2) Tap the indexed element
+- "click_coords": (x: float, y: float) Click exact pixel
+- "type": (id: integer ID or 0 for active, text: string) Type text
+- "scroll_down" / "scroll_up"
+- "home" / "back" / "recents" / "play_pause" / "toggle_torch"
+- "call": (param: contact name)
+- "read_screen": (param: text summary of what is seen) Read screen content out loud
+- "done": (param: completion message in user's spoken language) Task finished successfully
+- "reply": (param: conversational reply in user's language) For normal conversation
 
-RULES:
-- Handle multilingual requests naturally (e.g. "Ghar chalo" / "Bari jao" -> home, "Gaan bondho koro" / "Gaana rok do" -> play_pause, "Call lagao Rohit ko" -> call target "Rohit").
-- If the intent is conversational, set action to "reply" and answer in the SAME language the user used.
-- ALWAYS respond with STRICT JSON ONLY. No markdown, no triple backticks.
+DECISION RULES:
+1. Always analyze if current screen needs an app launch or an element click to reach the goal.
+2. If unexpected popups/ads appear, close them or click dismiss.
+3. If the user asks a question about the screen, use "read_screen" or "done".
+4. When finished, call "done".
 
-JSON FORMAT:
+OUTPUT FORMAT: Return STRICT VALID JSON ONLY (No markdown, no triple backticks):
 {
-  "action": "home" | "back" | "recents" | "play_pause" | "scroll_down" | "scroll_up" | "open_app" | "call" | "click" | "type" | "reply",
-  "target": "app name, contact name, or UI element",
-  "text": "text to type if action is type",
-  "reply": "friendly natural response in user's language confirming the action or answering their query"
+  "action": "open_app"|"click_id"|"click_coords"|"type"|"scroll_down"|"scroll_up"|"home"|"back"|"recents"|"play_pause"|"toggle_torch"|"call"|"read_screen"|"done"|"reply",
+  "param": "string param or text",
+  "id": 0,
+  "x": 0.0,
+  "y": 0.0,
+  "reason": "short explanation of why this step was taken"
 }
-        """.trimIndent()
+            """.trimIndent()
 
-        val fullPrompt = "$systemPrompt\n\nUser input: \"$trimmed\""
-        val rawAi = ai.ask(fullPrompt)
-        val cleanJson = rawAi.replace("```json", "").replace("```", "").trim()
+            val raw = ai.ask(prompt)
+            val clean = raw.replace("```json", "").replace("```", "").trim()
 
-        return try {
-            val json = JSONObject(cleanJson)
-            val action = json.optString("action", "reply")
-            val target = json.optString("target", "")
-            val text = json.optString("text", "")
-            val replyMsg = json.optString("reply", "")
+            try {
+                val stepJson = JSONObject(clean)
+                val action = stepJson.optString("action")
+                val param = stepJson.optString("param")
+                val id = stepJson.optInt("id", 0)
+                val x = stepJson.optDouble("x", 0.0).toFloat()
+                val y = stepJson.optDouble("y", 0.0).toFloat()
+                val reason = stepJson.optString("reason")
 
-            when (action) {
-                "home" -> {
-                    shizuku.run("home")
-                    if (replyMsg.isNotBlank()) replyMsg else "Home screen par aa gaye."
-                }
-                "back" -> {
-                    shizuku.run("back")
-                    if (replyMsg.isNotBlank()) replyMsg else "Back kiya."
-                }
-                "recents" -> {
-                    shizuku.run("recent")
-                    if (replyMsg.isNotBlank()) replyMsg else "Recent apps open kar diye."
-                }
-                "play_pause" -> {
-                    shizuku.run("play_pause")
-                    if (replyMsg.isNotBlank()) replyMsg else "Media playback toggle kar diya."
-                }
-                "scroll_down" -> {
-                    service?.swipeVertical(0.75f)
-                    if (replyMsg.isNotBlank()) replyMsg else "Neeche scroll kiya."
-                }
-                "scroll_up" -> {
-                    service?.swipeVertical(-0.75f)
-                    if (replyMsg.isNotBlank()) replyMsg else "Upar scroll kiya."
-                }
-                "open_app" -> {
-                    val res = openNamedApp(target)
-                    if (replyMsg.isNotBlank()) "$replyMsg ($res)" else res
-                }
-                "call" -> {
-                    val res = callByName(target)
-                    if (replyMsg.isNotBlank()) "$replyMsg ($res)" else res
-                }
-                "click" -> {
-                    val clicked = service?.clickElementByText(target) ?: false
-                    if (clicked) {
-                        if (replyMsg.isNotBlank()) replyMsg else "'$target' click kar diya."
-                    } else {
-                        "Screen par '$target' nahi mila click karne ke liye."
+                service?.showIsland("Step $currentStep: $action")
+
+                when (action) {
+                    "open_app" -> openApp(param)
+                    "click_id" -> service?.clickElementById(id)
+                    "click_coords" -> service?.clickCoordinates(x, y)
+                    "type" -> service?.typeTextIntoFocusedOrById(if (id > 0) id else null, param)
+                    "scroll_down" -> {
+                        val dm = context.resources.displayMetrics
+                        service?.swipe(dm.widthPixels / 2f, dm.heightPixels * 0.75f, dm.widthPixels / 2f, dm.heightPixels * 0.25f)
+                    }
+                    "scroll_up" -> {
+                        val dm = context.resources.displayMetrics
+                        service?.swipe(dm.widthPixels / 2f, dm.heightPixels * 0.25f, dm.widthPixels / 2f, dm.heightPixels * 0.75f)
+                    }
+                    "home" -> shizuku.run("home")
+                    "back" -> shizuku.run("back")
+                    "recents" -> shizuku.run("recent")
+                    "play_pause" -> shizuku.run("play_pause")
+                    "toggle_torch" -> toggleTorch()
+                    "call" -> autoCall(param)
+                    "read_screen", "done", "reply" -> {
+                        finalFeedback = param.ifBlank { reason }
+                        taskCompleted = true
                     }
                 }
-                "type" -> {
-                    val typed = service?.typeTextIntoFocusedOrTarget(target, text) ?: false
-                    if (typed) {
-                        if (replyMsg.isNotBlank()) replyMsg else "'$text' type kar diya."
-                    } else {
-                        "Text input field nahi mila."
-                    }
-                }
-                "reply" -> {
-                    if (replyMsg.isNotBlank()) replyMsg else rawAi
-                }
-                else -> {
-                    if (replyMsg.isNotBlank()) replyMsg else rawAi
-                }
+                delay(1200) // Screen rendering & animation wait
+            } catch (_: Exception) {
+                finalFeedback = ai.ask(trimmed)
+                taskCompleted = true
             }
-        } catch (_: Exception) {
-            // Agar model kabhi JSON syntax miss kare toh fallback plain reply
-            ai.ask(trimmed)
         }
+
+        if (finalFeedback.isBlank()) {
+            finalFeedback = "Task execute kar diya hai."
+        }
+
+        history.add("User: $trimmed")
+        history.add("Agent: $finalFeedback")
+        service?.showIsland("Ready")
+        return finalFeedback
     }
 
-    private fun openNamedApp(name: String): String {
-        if (name.isBlank()) return "Kaunsa app kholna hai?"
+    private fun openApp(name: String) {
         val pm = context.packageManager
-        val apps = pm.getInstalledApplications(0)
-        val app = apps.firstOrNull { it.loadLabel(pm).toString().equals(name, ignoreCase = true) }
-            ?: apps.firstOrNull { it.loadLabel(pm).toString().contains(name, ignoreCase = true) }
-            ?: return "App '$name' nahi mila."
-
-        val intent = pm.getLaunchIntentForPackage(app.packageName)
-            ?: return "'$name' ke liye launch activity nahi mili."
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val app = pm.getInstalledApplications(0).firstOrNull {
+            it.loadLabel(pm).toString().contains(name, true)
+        } ?: return
+        val intent = pm.getLaunchIntentForPackage(app.packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        } ?: return
         context.startActivity(intent)
-        return "$name open kar diya."
     }
 
-    private fun callByName(name: String): String {
-        if (name.isBlank()) return "Kisko call lagana hai?"
-        val cr = context.contentResolver
-        val cur = cr.query(
+    private fun autoCall(name: String) {
+        val cur = context.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                ContactsContract.CommonDataKinds.Phone.NUMBER
-            ),
+            arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
             "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
             arrayOf("%$name%"),
             null
-        ) ?: return "Contacts access nahi ho sake."
-
-        val matches = mutableListOf<Pair<String, String>>()
-        cur.use {
-            while (it.moveToNext()) {
-                matches.add(it.getString(0) to it.getString(1))
+        ) ?: return
+        var num: String? = null
+        cur.use { if (it.moveToNext()) num = it.getString(0) }
+        num?.let {
+            val i = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(it)}")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
+            context.startActivity(i)
         }
+    }
 
-        if (matches.isEmpty()) return "'$name' naam ka koi contact nahi mila."
-
-        val contact = matches.first()
-        val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(contact.second)}")).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(dialIntent)
-        return "${contact.first} (${contact.second}) ke liye dialer open kiya."
+    private fun toggleTorch() {
+        try {
+            val cam = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val id = cam.cameraIdList.firstOrNull() ?: return
+            isTorchOn = !isTorchOn
+            cam.setTorchMode(id, isTorchOn)
+        } catch (_: Exception) {}
     }
 }

@@ -4,17 +4,58 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <application android:theme="@style/Theme.AgentForge" android:label="@string/app_name" android:allowBackup="false" android:supportsRtl="true">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <application 
+        android:theme="@style/Theme.AgentForge" 
+        android:label="@string/app_name" 
+        android:allowBackup="false" 
+        android:supportsRtl="true">
+        
         <activity android:name=".MainActivity" android:exported="true">
-            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
         </activity>
-        <service android:name=".service.AgentAccessibilityService" android:exported="false" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:label="@string/app_name">
-            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter>
-            <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_service_config"/>
+
+        <receiver android:name=".service.CallStateReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
+
+        <service 
+            android:name=".service.CallVoicemailService" 
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <service 
+            android:name=".service.VoiceListenerService" 
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <service 
+            android:name=".service.AgentAccessibilityService" 
+            android:exported="false" 
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" 
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService"/>
+            </intent-filter>
+            <meta-data 
+                android:name="android.accessibilityservice" 
+                android:resource="@xml/accessibility_service_config"/>
         </service>
-    
-    
-    <provider android:name="rikka.shizuku.ShizukuProvider" android:authorities="${applicationId}.shizuku" android:enabled="true" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
-</application>
+
+        <provider 
+            android:name="rikka.shizuku.ShizukuProvider" 
+            android:authorities="${applicationId}.shizuku" 
+            android:enabled="true" 
+            android:exported="true" 
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+    </application>
 </manifest>
