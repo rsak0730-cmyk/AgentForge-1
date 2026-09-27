@@ -1,7 +1,6 @@
 package com.agentforge.app.security
 
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Debug
 import android.os.Process
@@ -25,16 +24,12 @@ class SecurityVault(private val context: Context) {
         private const val MASTER_KEY_ALIAS = "AgentForgeMasterShieldKey"
         private const val GCM_IV_LENGTH = 12
         private const val GCM_TAG_LENGTH = 128
-
-        // Hardcoded official release signature SHA-256 (Self-defense check)
-        var EXPECTED_SIGNATURE_HASH: String = ""
     }
 
     init {
         initHardwareKey()
     }
 
-    // ---------------- 1. HARDWARE KEYSTORE ENCRYPTION (AES-GCM) ----------------
     private fun initHardwareKey() {
         try {
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
@@ -90,7 +85,6 @@ class SecurityVault(private val context: Context) {
         } catch (_: Exception) { cipherText }
     }
 
-    // ---------------- 2. REAL-TIME THREAT SCANNER ----------------
     fun verifyEnvironmentIntegrity(): SecurityStatus {
         if (isDebuggerAttached()) {
             return SecurityStatus.THREAT_DETECTED("Active Debugger attached! Process halted.")
@@ -112,7 +106,6 @@ class SecurityVault(private val context: Context) {
     }
 
     private fun isFridaOrHookingPresent(): Boolean {
-        // 1. Check open Frida default ports (27042, 27043)
         val ports = intArrayOf(27042, 27043)
         for (port in ports) {
             try {
@@ -120,11 +113,11 @@ class SecurityVault(private val context: Context) {
             } catch (_: Exception) {}
         }
 
-        // 2. Scan maps file for frida/xposed injected native libraries
         try {
             val file = File("/proc/${Process.myPid()}/maps")
             if (file.canRead()) {
-                file.forEachLine { line ->
+                val lines = file.readLines()
+                for (line in lines) {
                     if (line.contains("frida", ignoreCase = true) ||
                         line.contains("xposed", ignoreCase = true) ||
                         line.contains("substrate", ignoreCase = true)
@@ -156,7 +149,6 @@ class SecurityVault(private val context: Context) {
             if (File(path).exists()) return true
         }
 
-        // Test running which su
         return try {
             val process = Runtime.getRuntime().exec(arrayOf("/system/xbin/which", "su"))
             val reader = BufferedReader(InputStreamReader(process.inputStream))
