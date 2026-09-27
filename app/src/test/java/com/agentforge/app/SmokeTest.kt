@@ -1,8 +1,11 @@
 package com.agentforge.app
 
+import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlin.test.assertTrue
 
 class SmokeTest {
-    @Test fun projectSmokeTest() { assertTrue("AgentForge".isNotBlank()) }
+    @Test
+    fun projectSmokeTest() {
+        assertTrue("AgentForge".isNotBlank())
+    }
 }
