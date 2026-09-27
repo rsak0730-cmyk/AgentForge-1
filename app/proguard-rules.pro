@@ -1,0 +1,2 @@
+-keep class com.agentforge.app.shizuku.PrivilegedUserService { *; }
+-keep interface com.agentforge.app.shizuku.IPrivilegedActions { *; }
