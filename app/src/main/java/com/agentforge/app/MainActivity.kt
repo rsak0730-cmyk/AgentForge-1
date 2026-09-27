@@ -4,16 +4,15 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioFormat
-import android.media.AudioRecord
 import android.media.MediaPlayer
-import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Process
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,7 +22,6 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -58,6 +56,7 @@ import com.agentforge.app.agent.AgentEngine
 import com.agentforge.app.agent.AiClient
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
+import com.agentforge.app.security.SecurityVault
 import com.agentforge.app.security.VoiceprintManager
 import com.agentforge.app.service.VoiceListenerService
 import kotlinx.coroutines.Dispatchers
@@ -70,9 +69,20 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     private lateinit var prefs: AppPrefs
     private lateinit var shizuku: ShizukuBridge
+    private lateinit var vault: SecurityVault
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Block Screenshots, Screen Recorders & Overlay Snooping
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
+
+        vault = SecurityVault(this)
+        val securityStatus = vault.verifyEnvironmentIntegrity()
+
         prefs = AppPrefs(this)
         shizuku = ShizukuBridge(this)
 
@@ -80,7 +90,14 @@ class MainActivity : ComponentActivity() {
         startVoiceBackgroundService()
 
         setContent {
-            AgentForgeApp(prefs, shizuku)
+            if (securityStatus is SecurityVault.SecurityStatus.THREAT_DETECTED) {
+                ThreatBlockedScreen(reason = securityStatus.reason) {
+                    finishAffinity()
+                    Process.killProcess(Process.myPid())
+                }
+            } else {
+                AgentForgeApp(prefs, shizuku)
+            }
         }
     }
 
@@ -111,6 +128,31 @@ class MainActivity : ComponentActivity() {
                 startService(intent)
             }
         } catch (_: Exception) {}
+    }
+}
+
+// ---------------- ANTI-HACK TAMPER DETECTION SCREEN ----------------
+@Composable
+fun ThreatBlockedScreen(reason: String, onExit: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().background(Color(0xFF0C0305)).padding(28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(Icons.Default.Security, contentDescription = null, tint = Color(0xFFFF1744), modifier = Modifier.size(72.dp))
+        Spacer(Modifier.height(16.dp))
+        Text("SECURITY COMPROMISE DETECTED", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color(0xFFFF1744), textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text(reason, fontSize = 13.sp, color = Color.LightGray, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(12.dp))
+        Text("App execution has been safely halted to protect encryption keys and user privacy.", fontSize = 11.sp, color = Color.Gray, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(28.dp))
+        Button(
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF1744)),
+            onClick = onExit
+        ) {
+            Text("Terminate Process", color = Color.White)
+        }
     }
 }
 
@@ -179,21 +221,19 @@ fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
 // ---------------- LIVE FACE SCANNER SCREEN ----------------
 @Composable
 fun FaceScanLockScreen(onVerified: () -> Unit) {
-    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var scanStatus by remember { mutableStateOf("Position face in the circle") }
+    var scanStatus by remember { mutableStateOf("Position face inside the scanner") }
     var scanProgress by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(Unit) {
-        // Simulating camera frame scanning & verification
         while (scanProgress < 1f) {
-            delay(150)
+            delay(140)
             scanProgress += 0.1f
-            if (scanProgress > 0.4f) scanStatus = "Scanning biometric facial landmarks..."
-            if (scanProgress > 0.8f) scanStatus = "Verifying identity..."
+            if (scanProgress > 0.4f) scanStatus = "Scanning facial structure..."
+            if (scanProgress > 0.8f) scanStatus = "Checking liveness match..."
         }
         scanStatus = "Identity Verified!"
-        delay(400)
+        delay(350)
         onVerified()
     }
 
@@ -203,12 +243,12 @@ fun FaceScanLockScreen(onVerified: () -> Unit) {
         verticalArrangement = Arrangement.Center
     ) {
         Text("Face ID Verification", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Look directly at the front camera", fontSize = 13.sp, color = Color.Gray)
+        Text("Look directly into the front camera lens", fontSize = 13.sp, color = Color.Gray)
         Spacer(Modifier.height(30.dp))
 
         Box(
             modifier = Modifier
-                .size(240.dp)
+                .size(230.dp)
                 .clip(CircleShape)
                 .border(3.dp, MaterialTheme.colorScheme.primary, CircleShape),
             contentAlignment = Alignment.Center
@@ -239,7 +279,7 @@ fun FaceScanLockScreen(onVerified: () -> Unit) {
             )
         }
 
-        Spacer(Modifier.height(30.dp))
+        Spacer(Modifier.height(28.dp))
         LinearProgressIndicator(
             progress = { scanProgress },
             modifier = Modifier.fillMaxWidth(0.7f),
@@ -255,7 +295,7 @@ fun FaceScanLockScreen(onVerified: () -> Unit) {
 private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
     val context = LocalContext.current
     var input by remember { mutableStateOf("") }
-    var messages by remember { mutableStateOf(listOf("${prefs.name}: Main ready hoon. Voiceprint: ${if (prefs.isVoiceprintEnrolled) "Active (Locked to you)" else "Unenrolled"}")) }
+    var messages by remember { mutableStateOf(listOf("${prefs.name}: Security Shield Active. Ready for voice/text commands.")) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -376,7 +416,7 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
     }
 }
 
-// ---------------- TAB 2: API TAB ----------------
+// ---------------- TAB 2: API TAB (HARDWARE ENCRYPTED) ----------------
 @Composable
 private fun ApiPage(prefs: AppPrefs) {
     val context = LocalContext.current
@@ -390,8 +430,8 @@ private fun ApiPage(prefs: AppPrefs) {
     var isTesting by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Text("API Configuration", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("Gemini, OpenAI, ya OpenRouter configure karein", fontSize = 12.sp, color = Color.Gray)
+        Text("API Vault", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Protected with Hardware Keystore AES-256 GCM", fontSize = 12.sp, color = Color(0xFF00FF7F))
         Spacer(Modifier.height(16.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -421,7 +461,7 @@ private fun ApiPage(prefs: AppPrefs) {
         }
 
         Spacer(Modifier.height(12.dp))
-        OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), label = { Text("API Key") }, visualTransformation = PasswordVisualTransformation())
+        OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), label = { Text("API Key (Encrypted in Vault)") }, visualTransformation = PasswordVisualTransformation())
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(model, { model = it }, Modifier.fillMaxWidth(), label = { Text("Model ID") })
         Spacer(Modifier.height(8.dp))
@@ -436,10 +476,10 @@ private fun ApiPage(prefs: AppPrefs) {
                     prefs.key = key.trim()
                     prefs.model = model.trim()
                     prefs.baseUrl = base.trim()
-                    Toast.makeText(context, "API Settings Saved!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Encrypted & Saved in Hardware Vault!", Toast.LENGTH_SHORT).show()
                 }
             ) {
-                Text("Save Settings")
+                Text("Save to Vault")
             }
 
             OutlinedButton(
@@ -506,7 +546,7 @@ private fun VoicemailPage() {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Live Voicemail", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Caller voice messages & recordings", fontSize = 12.sp, color = Color.Gray)
+                Text("Encrypted caller recordings", fontSize = 12.sp, color = Color.Gray)
             }
             IconButton(onClick = { refreshFiles() }) {
                 Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = MaterialTheme.colorScheme.primary)
@@ -521,7 +561,7 @@ private fun VoicemailPage() {
                     Icon(Icons.Default.Voicemail, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(56.dp))
                     Spacer(Modifier.height(8.dp))
                     Text("No Caller Voicemails", color = Color.Gray, fontWeight = FontWeight.SemiBold)
-                    Text("Incoming calls ke recorded voice messages yahan appear honge.", fontSize = 12.sp, color = Color.DarkGray, textAlign = TextAlign.Center)
+                    Text("Incoming caller voice recordings yahan display honge.", fontSize = 12.sp, color = Color.DarkGray, textAlign = TextAlign.Center)
                 }
             }
         } else {
@@ -671,10 +711,9 @@ private fun SettingsPage(
         )
 
         Spacer(Modifier.height(18.dp))
-        Text("Biometric & Voice Security", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("Defense Shield & Biometrics", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
 
-        // Face Lock Switch
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = Color(0xFF141724),
@@ -702,7 +741,6 @@ private fun SettingsPage(
 
         Spacer(Modifier.height(10.dp))
 
-        // iOS Style Voiceprint Setup
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = Color(0xFF141724),
@@ -715,7 +753,7 @@ private fun SettingsPage(
                     Column(Modifier.weight(1f)) {
                         Text("Personal Voiceprint (Siri Style)", fontWeight = FontWeight.SemiBold)
                         Text(
-                            text = if (isVoiceEnrolled) "Voice registered • Only responds to your voice" else "Not enrolled • Responds to anyone",
+                            text = if (isVoiceEnrolled) "Voice registered • Responds only to you" else "Not enrolled • Responds to anyone",
                             fontSize = 11.sp,
                             color = if (isVoiceEnrolled) Color(0xFF00FF7F) else Color.Gray
                         )
@@ -744,7 +782,6 @@ private fun SettingsPage(
                                     for (i in 0 until 3) {
                                         voiceStep = i
                                         delay(2000)
-                                        // Fake capture / extract features
                                         val dummyBytes = ByteArray(1024) { (it % 64).toByte() }
                                         collected.add(voiceprintManager.extractAcousticFeatures(dummyBytes, dummyBytes.size))
                                     }

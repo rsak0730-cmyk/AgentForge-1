@@ -1,21 +1,30 @@
 package com.agentforge.app.data
 
 import android.content.Context
+import com.agentforge.app.security.SecurityVault
 
 class AppPrefs(context: Context) {
-    private val p = context.getSharedPreferences("agentforge", Context.MODE_PRIVATE)
+    private val p = context.getSharedPreferences("agentforge_secure_store", Context.MODE_PRIVATE)
+    private val vault = SecurityVault(context)
 
     var provider: String get() = p.getString("provider", "gemini") ?: "gemini"; set(v) = p.edit().putString("provider", v).apply()
     var name: String get() = p.getString("name", "Mira") ?: "Mira"; set(v) = p.edit().putString("name", v).apply()
     var wakeWord: String get() = p.getString("wake_word", "hey mira") ?: "hey mira"; set(v) = p.edit().putString("wake_word", v).apply()
     var isSleeping: Boolean get() = p.getBoolean("is_sleeping", false); set(v) = p.edit().putBoolean("is_sleeping", v).apply()
 
-    // Security Settings
+    // Biometric Security
     var isFaceLockEnabled: Boolean get() = p.getBoolean("face_lock_enabled", false); set(v) = p.edit().putBoolean("face_lock_enabled", v).apply()
     var isVoiceprintEnrolled: Boolean get() = p.getBoolean("voiceprint_enrolled", false); set(v) = p.edit().putBoolean("voiceprint_enrolled", v).apply()
-    var enrolledVoiceprint: String get() = p.getString("voiceprint_data", "") ?: ""; set(v) = p.edit().putString("voiceprint_data", v).apply()
 
-    var key: String get() = p.getString("key", "") ?: ""; set(v) = p.edit().putString("key", v).apply()
+    // Hardware Vault Encrypted Strings
+    var enrolledVoiceprint: String
+        get() = vault.decrypt(p.getString("vault_voiceprint", "") ?: "")
+        set(v) = p.edit().putString("vault_voiceprint", vault.encrypt(v)).apply()
+
+    var key: String
+        get() = vault.decrypt(p.getString("vault_api_key", "") ?: "")
+        set(v) = p.edit().putString("vault_api_key", vault.encrypt(v)).apply()
+
     var model: String get() = p.getString("model", "gemini-2.5-flash") ?: "gemini-2.5-flash"; set(v) = p.edit().putString("model", v).apply()
     var baseUrl: String get() = p.getString("base", "https://generativelanguage.googleapis.com") ?: "https://generativelanguage.googleapis.com"; set(v) = p.edit().putString("base", v).apply()
     var theme: String get() = p.getString("theme", "neonblue") ?: "neonblue"; set(v) = p.edit().putString("theme", v).apply()
