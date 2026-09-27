@@ -4,18 +4,20 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.content.Context
+import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
-import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
+import com.agentforge.app.data.AppPrefs
 
 class AgentAccessibilityService : AccessibilityService() {
 
@@ -25,36 +27,101 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     private var island: TextView? = null
-    // Fast lookup map for element IDs to screen coordinates
+    private var windowManager: WindowManager? = null
     private val elementBoundsMap = mutableMapOf<Int, Pair<Float, Float>>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         serviceInfo = serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
-        showIsland("Agent OS: Active")
+        showIsland("Agent OS Ready")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() { showIsland("Paused") }
 
     override fun onDestroy() {
-        island?.let { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) }
+        island?.let { windowManager?.removeView(it) }
         island = null
         instance = null
         super.onDestroy()
     }
 
-    // Scans screen and returns an indexed semantic map of everything on display
+    fun updateIslandGeometry() {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val prefs = AppPrefs(this)
+                val view = island ?: return@post
+                val wm = windowManager ?: return@post
+
+                val params = view.layoutParams as? WindowManager.LayoutParams ?: return@post
+                params.x = prefs.islandX.toInt()
+                params.y = prefs.islandY.toInt()
+                params.width = prefs.islandWidth.toInt()
+                params.height = prefs.islandHeight.toInt()
+
+                val shape = GradientDrawable().apply {
+                    setColor(0xEE0B0D18.toInt())
+                    cornerRadius = prefs.islandRadius
+                    setStroke(2, 0xFF00FFCC.toInt())
+                }
+                view.background = shape
+
+                wm.updateViewLayout(view, params)
+            } catch (_: Throwable) {}
+        }
+    }
+
+    fun showIsland(text: String) {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val prefs = AppPrefs(this)
+                val wm = windowManager ?: getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                windowManager = wm
+
+                val shape = GradientDrawable().apply {
+                    setColor(0xEE0B0D18.toInt())
+                    cornerRadius = prefs.islandRadius
+                    setStroke(2, 0xFF00FFCC.toInt())
+                }
+
+                if (island == null) {
+                    island = TextView(this).apply {
+                        setTextColor(Color.WHITE)
+                        textSize = 11f
+                        gravity = Gravity.CENTER
+                        setPadding(12, 6, 12, 6)
+                        background = shape
+                    }
+                    val params = WindowManager.LayoutParams(
+                        prefs.islandWidth.toInt(),
+                        prefs.islandHeight.toInt(),
+                        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        PixelFormat.TRANSLUCENT
+                    ).apply {
+                        gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                        x = prefs.islandX.toInt()
+                        y = prefs.islandY.toInt()
+                    }
+                    wm.addView(island, params)
+                } else {
+                    updateIslandGeometry()
+                }
+                island?.text = text
+            } catch (_: Throwable) {}
+        }
+    }
+
     fun getIndexedScreenElements(): String {
-        val root = rootInActiveWindow ?: return "Screen tree empty or locked."
+        val root = rootInActiveWindow ?: return "Screen tree empty."
         elementBoundsMap.clear()
         val elements = mutableListOf<String>()
-        var counter = 1
-        traverseNodes(root, elements, counter)
+        traverseNodes(root, elements, 1)
         return elements.joinToString("\n")
     }
 
@@ -68,11 +135,7 @@ class AgentAccessibilityService : AccessibilityService() {
         val isEditable = node.isEditable
 
         if (!text.isNullOrEmpty() || !desc.isNullOrEmpty() || isEditable) {
-            val label = when {
-                !text.isNullOrEmpty() -> text
-                !desc.isNullOrEmpty() -> desc
-                else -> "InputField"
-            }
+            val label = if (!text.isNullOrEmpty()) text else (desc ?: "Input")
             val rect = Rect()
             node.getBoundsInScreen(rect)
             val cx = rect.centerX().toFloat()
@@ -80,7 +143,7 @@ class AgentAccessibilityService : AccessibilityService() {
 
             if (rect.width() > 0 && rect.height() > 0) {
                 elementBoundsMap[currentId] = Pair(cx, cy)
-                list.add("[#$currentId] \"$label\" | Type: ${if (isEditable) "Input" else "Clickable"} | Coords: ($cx, $cy)")
+                list.add("[#$currentId] \"$label\" | ${if (isEditable) "Input" else "Clickable"} | ($cx, $cy)")
                 currentId++
             }
         }
@@ -122,32 +185,5 @@ class AgentAccessibilityService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
             .build()
         return dispatchGesture(gesture, null, null)
-    }
-
-    fun showIsland(text: String) {
-        Handler(Looper.getMainLooper()).post {
-            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            if (island == null) {
-                island = TextView(this).apply {
-                    setTextColor(0xFF00FFCC.toInt())
-                    setBackgroundColor(0xF00A0C16.toInt())
-                    textSize = 12f
-                    gravity = Gravity.CENTER
-                    setPadding(32, 14, 32, 14)
-                }
-                val params = WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                    90,
-                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                    PixelFormat.TRANSLUCENT
-                ).apply {
-                    gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                    y = 16
-                }
-                try { wm.addView(island, params) } catch (_: Exception) {}
-            }
-            island?.text = text
-        }
     }
 }
