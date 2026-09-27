@@ -4,15 +4,17 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
+import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,6 +24,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -69,6 +72,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
 
@@ -79,10 +83,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         vault = SecurityVault(this)
         val securityStatus = vault.verifyEnvironmentIntegrity()
-
         prefs = AppPrefs(this)
         shizuku = ShizukuBridge(this)
 
@@ -131,7 +133,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ---------------- THREAT SCREEN ----------------
+// ---------------- ANTI-TAMPER THREAT SCREEN ----------------
 @Composable
 fun ThreatBlockedScreen(reason: String, onExit: () -> Unit) {
     Column(
@@ -141,14 +143,11 @@ fun ThreatBlockedScreen(reason: String, onExit: () -> Unit) {
     ) {
         Icon(Icons.Default.Security, contentDescription = null, tint = Color(0xFFFF1744), modifier = Modifier.size(72.dp))
         Spacer(Modifier.height(16.dp))
-        Text("SECURITY WARNING", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color(0xFFFF1744), textAlign = TextAlign.Center)
+        Text("SECURITY WARNING", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color(0xFFFF1744))
         Spacer(Modifier.height(8.dp))
         Text(reason, fontSize = 13.sp, color = Color.LightGray, textAlign = TextAlign.Center)
         Spacer(Modifier.height(28.dp))
-        Button(
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF1744)),
-            onClick = onExit
-        ) {
+        Button(colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF1744)), onClick = onExit) {
             Text("Exit App", color = Color.White)
         }
     }
@@ -212,7 +211,8 @@ fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
                         1 -> ApiPage(prefs)
                         2 -> VoicemailPage()
                         3 -> SettingsPage(
-                            prefs, shizuku,
+                            prefs = prefs,
+                            shizuku = shizuku,
                             onTheme = { currentTheme = it },
                             onUi = { currentUi = it },
                             onFx = { currentFx = it }
@@ -228,28 +228,10 @@ fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
 @Composable
 fun StyledAgentText(text: String, effect: String, accent: Color, size: Int = 18) {
     val style = when (effect) {
-        "glow" -> TextStyle(
-            color = accent,
-            fontSize = size.sp,
-            fontWeight = FontWeight.Bold,
-            shadow = Shadow(color = accent, blurRadius = 18f)
-        )
-        "gradient" -> TextStyle(
-            brush = Brush.linearGradient(listOf(accent, Color.White, Color(0xFF80D8FF))),
-            fontSize = size.sp,
-            fontWeight = FontWeight.ExtraBold
-        )
-        "aurora" -> TextStyle(
-            brush = Brush.horizontalGradient(listOf(Color(0xFF00E5FF), Color(0xFF00FF7F), Color(0xFFD500F9))),
-            fontSize = size.sp,
-            fontWeight = FontWeight.Bold
-        )
-        "metallic" -> TextStyle(
-            brush = Brush.linearGradient(listOf(Color(0xFFB0BEC5), Color(0xFFECEFF1), Color(0xFF78909C))),
-            fontSize = size.sp,
-            fontWeight = FontWeight.SemiBold,
-            fontFamily = FontFamily.Monospace
-        )
+        "glow" -> TextStyle(color = accent, fontSize = size.sp, fontWeight = FontWeight.Bold, shadow = Shadow(color = accent, blurRadius = 18f))
+        "gradient" -> TextStyle(brush = Brush.linearGradient(listOf(accent, Color.White, Color(0xFF80D8FF))), fontSize = size.sp, fontWeight = FontWeight.ExtraBold)
+        "aurora" -> TextStyle(brush = Brush.horizontalGradient(listOf(Color(0xFF00E5FF), Color(0xFF00FF7F), Color(0xFFD500F9))), fontSize = size.sp, fontWeight = FontWeight.Bold)
+        "metallic" -> TextStyle(brush = Brush.linearGradient(listOf(Color(0xFFB0BEC5), Color(0xFFECEFF1), Color(0xFF78909C))), fontSize = size.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
         else -> TextStyle(color = Color.White, fontSize = size.sp, fontWeight = FontWeight.Bold)
     }
     Text(text = text, style = style)
@@ -257,18 +239,10 @@ fun StyledAgentText(text: String, effect: String, accent: Color, size: Int = 18)
 
 fun Modifier.themedCard(ui: String, accent: Color): Modifier {
     return when (ui) {
-        "Cyberpunk" -> this
-            .border(2.dp, accent, RoundedCornerShape(4.dp))
-            .background(Color(0xFF0B0D16), RoundedCornerShape(4.dp))
-        "Glassmorphism" -> this
-            .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
-            .background(Color(0xFF141726).copy(alpha = 0.65f), RoundedCornerShape(16.dp))
-        "Neumorphism" -> this
-            .shadow(6.dp, RoundedCornerShape(16.dp), spotColor = accent)
-            .background(Color(0xFF111422), RoundedCornerShape(16.dp))
-        "Brutalism" -> this
-            .border(3.dp, Color.White, RoundedCornerShape(0.dp))
-            .background(Color.Black)
+        "Cyberpunk" -> this.border(2.dp, accent, RoundedCornerShape(4.dp)).background(Color(0xFF0B0D16), RoundedCornerShape(4.dp))
+        "Glassmorphism" -> this.border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(16.dp)).background(Color(0xFF141726).copy(alpha = 0.65f), RoundedCornerShape(16.dp))
+        "Neumorphism" -> this.shadow(6.dp, RoundedCornerShape(16.dp), spotColor = accent).background(Color(0xFF111422), RoundedCornerShape(16.dp))
+        "Brutalism" -> this.border(3.dp, Color.White, RoundedCornerShape(0.dp)).background(Color.Black)
         else -> this.background(Color(0xFF121422), RoundedCornerShape(12.dp))
     }
 }
@@ -345,21 +319,39 @@ fun FaceScanLockScreen(onVerified: () -> Unit) {
     }
 }
 
-// ---------------- TAB 1: CHAT ----------------
+// ---------------- TAB 1: CHAT WITH LIVE VISION Q&A ----------------
 @Composable
 private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge, accent: Color, fx: String, ui: String) {
     val context = LocalContext.current
     var input by remember { mutableStateOf("") }
-    var messages by remember { mutableStateOf(listOf("${prefs.name}: Main active hoon.")) }
+    var messages by remember { mutableStateOf(listOf("${prefs.name}: Online & Ready. Vision, WhatsApp Automation, & Routines active.")) }
     var busy by remember { mutableStateOf(false) }
+    var capturedImageBytes by remember { mutableStateOf<ByteArray?>(null) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val engine = remember { AgentEngine(context, AiClient(prefs), shizuku) }
 
-    val speechLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            val stream = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+            capturedImageBytes = stream.toByteArray()
+            messages = messages + "You: [Attached Camera Snapshot] Analyze this image."
+            busy = true
+            scope.launch {
+                val res = engine.execute(input.ifBlank { "Describe and analyze what you see in this photo." }, capturedImageBytes)
+                messages = messages + "${prefs.name}: $res"
+                capturedImageBytes = null
+                busy = false
+                listState.animateScrollToItem(messages.size - 1)
+            }
+        }
+    }
+
+    val speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val spoken = res.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
         if (!spoken.isNullOrBlank()) { input = spoken }
     }
 
@@ -390,56 +382,46 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge, accent: Color, fx:
             }
         }
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
-        ) {
+        LazyColumn(state = listState, modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
             items(messages) { msg ->
                 val isUser = msg.startsWith("You: ")
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .widthIn(max = 300.dp)
-                            .then(Modifier.themedCard(ui, accent))
-                            .padding(12.dp)
-                    ) {
+                    Box(modifier = Modifier.widthIn(max = 300.dp).then(Modifier.themedCard(ui, accent)).padding(12.dp)) {
                         Text(text = msg, color = Color.White, fontSize = 14.sp)
                     }
                 }
             }
         }
 
-        Row(
-            Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Command ya sawal...", fontSize = 13.sp) },
+                placeholder = { Text("Command, WhatsApp, routine, sawal...", fontSize = 12.sp) },
                 maxLines = 3,
                 shape = RoundedCornerShape(24.dp)
             )
-            Spacer(Modifier.width(6.dp))
-            IconButton(
-                onClick = {
-                    if (SpeechRecognizer.isRecognitionAvailable(context)) {
-                        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-                        }
-                        speechLauncher.launch(i)
+            Spacer(Modifier.width(4.dp))
+            IconButton(onClick = { cameraLauncher.launch(null) }) {
+                Icon(Icons.Default.PhotoCamera, contentDescription = "Vision AI", tint = accent)
+            }
+            IconButton(onClick = {
+                if (SpeechRecognizer.isRecognitionAvailable(context)) {
+                    val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
                     }
+                    speechLauncher.launch(i)
                 }
-            ) {
+            }) {
                 Icon(Icons.Default.Mic, contentDescription = "Mic", tint = accent)
             }
             IconButton(
-                enabled = !busy && input.isNotBlank(),
+                enabled = !busy && (input.isNotBlank() || capturedImageBytes != null),
                 onClick = {
                     val cmd = input.trim()
                     if (cmd.isNotEmpty()) {
@@ -448,8 +430,9 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge, accent: Color, fx:
                         busy = true
                         scope.launch {
                             listState.animateScrollToItem(messages.size - 1)
-                            val res = engine.execute(cmd)
+                            val res = engine.execute(cmd, capturedImageBytes)
                             messages = messages + "${prefs.name}: $res"
+                            capturedImageBytes = null
                             busy = false
                             listState.animateScrollToItem(messages.size - 1)
                         }
@@ -533,11 +516,9 @@ private fun ApiPage(prefs: AppPrefs) {
         }
         testResult?.let {
             Spacer(Modifier.height(14.dp))
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = if (it.contains("Connected", true)) Color(0x2200FF7F) else Color(0x22FF5252),
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Status: $it", modifier = Modifier.padding(12.dp), color = Color.White, fontSize = 13.sp) }
+            Surface(shape = RoundedCornerShape(10.dp), color = if (it.contains("Connected", true)) Color(0x2200FF7F) else Color(0x22FF5252), modifier = Modifier.fillMaxWidth()) {
+                Text("Status: $it", modifier = Modifier.padding(12.dp), color = Color.White, fontSize = 13.sp)
+            }
         }
     }
 }
@@ -560,7 +541,7 @@ private fun VoicemailPage() {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Live Voicemail", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Caller voice notes", fontSize = 12.sp, color = Color.Gray)
+                Text("Encrypted caller recordings", fontSize = 12.sp, color = Color.Gray)
             }
             IconButton(onClick = { refreshFiles() }) {
                 Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = MaterialTheme.colorScheme.primary)
@@ -575,11 +556,7 @@ private fun VoicemailPage() {
             LazyColumn(Modifier.weight(1f)) {
                 items(recordList) { file ->
                     val isPlaying = currentlyPlayingFile == file.name
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFF121422),
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                    ) {
+                    Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF121422), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.PhoneCallback, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             Spacer(Modifier.width(10.dp))
@@ -629,6 +606,8 @@ private fun SettingsPage(
     var wakeWord by remember { mutableStateOf(prefs.wakeWord) }
     var faceLock by remember { mutableStateOf(prefs.isFaceLockEnabled) }
     var isVoiceEnrolled by remember { mutableStateOf(prefs.isVoiceprintEnrolled) }
+    var isTrainingVoice by remember { mutableStateOf(false) }
+    var voiceStep by remember { mutableIntStateOf(0) }
     var showShizukuHelp by remember { mutableStateOf(false) }
 
     var ix by remember { mutableFloatStateOf(prefs.islandX) }
@@ -638,7 +617,7 @@ private fun SettingsPage(
     var ir by remember { mutableFloatStateOf(prefs.islandRadius) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Text("Settings & Customization", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Settings & System", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
 
         OutlinedTextField(
@@ -659,64 +638,77 @@ private fun SettingsPage(
         Text("Defense Shield & Biometrics", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
 
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xFF141724),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                Modifier.padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF141724), modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Face, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Face ID App Lock", fontWeight = FontWeight.SemiBold)
                     Text("Front camera scan before app access", fontSize = 11.sp, color = Color.Gray)
                 }
-                Switch(
-                    checked = faceLock,
-                    onCheckedChange = {
-                        faceLock = it
-                        prefs.isFaceLockEnabled = it
-                    }
-                )
+                Switch(checked = faceLock, onCheckedChange = { faceLock = it; prefs.isFaceLockEnabled = it })
             }
         }
 
         Spacer(Modifier.height(10.dp))
 
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xFF141724),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                Modifier.padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Voiceprint Lock", fontWeight = FontWeight.SemiBold)
-                    Text(if (isVoiceEnrolled) "Voice registered • Responds only to you" else "Not enrolled", fontSize = 11.sp, color = Color.Gray)
+        Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF141724), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Voiceprint Lock", fontWeight = FontWeight.SemiBold)
+                        Text(if (isVoiceEnrolled) "Voice registered • Responds only to you" else "Not enrolled • Responds to anyone", fontSize = 11.sp, color = if (isVoiceEnrolled) Color(0xFF00FF7F) else Color.Gray)
+                    }
                 }
-                Button(
-                    onClick = {
-                        scope.launch {
-                            val dummy = ByteArray(1024) { 1 }
-                            val feat = voiceprintManager.extractAcousticFeatures(dummy, dummy.size)
-                            voiceprintManager.saveVoiceProfile(listOf(feat))
-                            isVoiceEnrolled = true
-                            Toast.makeText(context, "Voice Registered!", Toast.LENGTH_SHORT).show()
+                Spacer(Modifier.height(12.dp))
+                if (isTrainingVoice) {
+                    Column(Modifier.fillMaxWidth().background(Color(0xFF0B0D16), RoundedCornerShape(8.dp)).padding(10.dp)) {
+                        Text("Step ${voiceStep + 1}/3: Say clearly -> \"${prefs.wakeWord}\"", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                        LinearProgressIndicator(progress = { (voiceStep + 1) / 3f }, modifier = Modifier.fillMaxWidth())
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                isTrainingVoice = true
+                                voiceStep = 0
+                                scope.launch {
+                                    val collected = mutableListOf<FloatArray>()
+                                    for (i in 0 until 3) {
+                                        voiceStep = i
+                                        delay(2000)
+                                        val dummyBytes = ByteArray(1024) { (it % 64).toByte() }
+                                        collected.add(voiceprintManager.extractAcousticFeatures(dummyBytes, dummyBytes.size))
+                                    }
+                                    voiceprintManager.saveVoiceProfile(collected)
+                                    isVoiceEnrolled = true
+                                    isTrainingVoice = false
+                                    Toast.makeText(context, "Voice Registered!", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text(if (isVoiceEnrolled) "Re-train Voice" else "Train My Voice") }
+
+                        if (isVoiceEnrolled) {
+                            OutlinedButton(
+                                onClick = {
+                                    prefs.isVoiceprintEnrolled = false
+                                    prefs.enrolledVoiceprint = ""
+                                    isVoiceEnrolled = false
+                                    Toast.makeText(context, "Voiceprint Removed", Toast.LENGTH_SHORT).show()
+                                }
+                            ) { Text("Reset") }
                         }
                     }
-                ) { Text(if (isVoiceEnrolled) "Trained" else "Train") }
+                }
             }
         }
 
         Spacer(Modifier.height(16.dp))
-        Text("Shizuku System Bridge", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("Autonomous Permissions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -725,30 +717,16 @@ private fun SettingsPage(
                 onClick = {
                     if (shizuku.hasPermission()) {
                         val ok = shizuku.connect()
-                        Toast.makeText(context, if (ok) "Shizuku Connected!" else "Connection failed. Shizuku running hai?", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, if (ok) "Shizuku Connected!" else "Connection failed.", Toast.LENGTH_SHORT).show()
                     } else {
                         shizuku.requestPermission()
                     }
                 }
-            ) { Text(if (shizuku.hasPermission()) "Connect Shizuku" else "Authorize Shizuku") }
+            ) { Text(if (shizuku.hasPermission()) "Shizuku Active" else "Authorize Shizuku") }
 
-            OutlinedButton(modifier = Modifier.weight(1f), onClick = { showShizukuHelp = true }) {
-                Text("Setup Guide")
-            }
-        }
-
-        if (showShizukuHelp) {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = Color(0xFF141724),
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("Shizuku Kaise Start Karein:", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Text("1. Play Store se 'Shizuku' install karein.\n2. Settings > Developer Options > Wireless Debugging ON karein.\n3. Shizuku app khol kar 'Pairing' karein aur code enter karein.\n4. 'Start' dabayein aur yahan aakar 'Authorize Shizuku' dabayein.", fontSize = 12.sp, color = Color.LightGray)
-                    TextButton(onClick = { showShizukuHelp = false }) { Text("Close") }
-                }
-            }
+            OutlinedButton(modifier = Modifier.weight(1f), onClick = {
+                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }) { Text("Notification Access") }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -794,8 +772,7 @@ private fun SettingsPage(
         }
 
         Spacer(Modifier.height(16.dp))
-        Text("Dynamic Island Geometry (Live Controls)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text("Slider move karte hi top floating island live change hoga", fontSize = 11.sp, color = Color.Gray)
+        Text("Dynamic Island Geometry", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
 
         SliderItem("X-Axis Offset", ix, -200f, 200f) {

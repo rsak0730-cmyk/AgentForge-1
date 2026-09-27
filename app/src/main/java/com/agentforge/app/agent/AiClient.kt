@@ -1,5 +1,6 @@
 package com.agentforge.app.agent
 
+import android.util.Base64
 import com.agentforge.app.data.AppPrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -9,35 +10,103 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 class AiClient(private val prefs: AppPrefs) {
-    private val client = OkHttpClient()
-    suspend fun ask(prompt: String): String = withContext(Dispatchers.IO) {
-        if (prefs.key.isBlank()) return@withContext "API key is not configured. Open API Setup first."
-        when (prefs.provider.lowercase()) {
-            "openai", "openrouter" -> openCompatible(prompt)
-            else -> gemini(prompt)
+
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    suspend fun ask(prompt: String, imageBytes: ByteArray? = null): String = withContext(Dispatchers.IO) {
+        val apiKey = prefs.key
+        if (apiKey.isBlank()) return@withContext "API Key missing hai. Settings me jakar set karein."
+
+        return@withContext try {
+            if (prefs.provider == "gemini") {
+                callGemini(prompt, imageBytes, apiKey)
+            } else {
+                callOpenAiCompatible(prompt, imageBytes, apiKey)
+            }
+        } catch (e: Exception) {
+            "API Connection Error: ${e.message}"
         }
     }
-    private fun gemini(prompt: String): String {
-        val base = prefs.baseUrl.trimEnd('/').ifBlank { "https://generativelanguage.googleapis.com" }
-        val url = "$base/v1beta/models/${prefs.model}:generateContent?key=${prefs.key}"
-        val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prompt))))).toString()
-        val req = Request.Builder().url(url).post(body.toRequestBody("application/json".toMediaType())).build()
-        client.newCall(req).execute().use { r ->
-            val raw = r.body?.string().orEmpty()
-            if (!r.isSuccessful) return "AI error ${r.code}: ${raw.take(300)}"
-            return JSONObject(raw).optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text") ?: "No response."
+
+    private fun callGemini(prompt: String, imageBytes: ByteArray?, apiKey: String): String {
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/${prefs.model}:generateContent?key=$apiKey"
+        val partsArray = JSONArray()
+
+        if (imageBytes != null) {
+            val inlineData = JSONObject().apply {
+                put("mime_type", "image/jpeg")
+                put("data", Base64.encodeToString(imageBytes, Base64.NO_WRAP))
+            }
+            partsArray.put(JSONObject().put("inline_data", inlineData))
         }
+
+        partsArray.put(JSONObject().put("text", prompt))
+
+        val bodyJson = JSONObject().apply {
+            put("contents", JSONArray().put(JSONObject().put("parts", partsArray)))
+        }
+
+        val req = Request.Builder()
+            .url(url)
+            .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val res = http.newCall(req).execute()
+        val resBody = res.body?.string() ?: return "Empty response"
+        val obj = JSONObject(resBody)
+        return obj.optJSONArray("candidates")
+            ?.optJSONObject(0)
+            ?.optJSONObject("content")
+            ?.optJSONArray("parts")
+            ?.optJSONObject(0)
+            ?.optString("text") ?: resBody
     }
-    private fun openCompatible(prompt: String): String {
-        val base = prefs.baseUrl.trimEnd('/').ifBlank { "https://api.openai.com/v1" }
-        val body = JSONObject().put("model", prefs.model).put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt))).toString()
-        val req = Request.Builder().url("$base/chat/completions").addHeader("Authorization", "Bearer ${prefs.key}").post(body.toRequestBody("application/json".toMediaType())).build()
-        client.newCall(req).execute().use { r ->
-            val raw = r.body?.string().orEmpty()
-            if (!r.isSuccessful) return "AI error ${r.code}: ${raw.take(300)}"
-            return JSONObject(raw).optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content") ?: "No response."
+
+    private fun callOpenAiCompatible(prompt: String, imageBytes: ByteArray?, apiKey: String): String {
+        val url = if (prefs.baseUrl.endsWith("/chat/completions")) prefs.baseUrl else "${prefs.baseUrl.removeSuffix("/")}/chat/completions"
+        val messages = JSONArray()
+
+        val contentObj = JSONArray()
+        if (imageBytes != null) {
+            val b64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
+            contentObj.put(JSONObject().apply {
+                put("type", "image_url")
+                put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$b64"))
+            })
         }
+        contentObj.put(JSONObject().apply {
+            put("type", "text")
+            put("text", prompt)
+        })
+
+        messages.put(JSONObject().apply {
+            put("role", "user")
+            put("content", contentObj)
+        })
+
+        val bodyJson = JSONObject().apply {
+            put("model", prefs.model)
+            put("messages", messages)
+        }
+
+        val req = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val res = http.newCall(req).execute()
+        val resBody = res.body?.string() ?: return "Empty response"
+        val obj = JSONObject(resBody)
+        return obj.optJSONArray("choices")
+            ?.optJSONObject(0)
+            ?.optJSONObject("message")
+            ?.optString("content") ?: resBody
     }
 }

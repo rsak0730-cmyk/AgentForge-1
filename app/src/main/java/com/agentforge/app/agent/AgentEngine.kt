@@ -1,16 +1,22 @@
 package com.agentforge.app.agent
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.provider.ContactsContract
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.service.AgentAccessibilityService
+import com.agentforge.app.service.RoutineAlarmReceiver
+import com.agentforge.app.service.SmartNotificationService
 import kotlinx.coroutines.delay
 import org.json.JSONObject
-import java.util.Locale
+import java.util.Calendar
 
 class AgentEngine(
     private val context: Context,
@@ -20,118 +26,229 @@ class AgentEngine(
     private val history = mutableListOf<String>()
     private var isTorchOn = false
 
-    suspend fun execute(userQuery: String): String {
+    suspend fun execute(userQuery: String, capturedImageBytes: ByteArray? = null): String {
         val trimmed = userQuery.trim()
-        if (trimmed.isEmpty()) return "Main sun raha hoon, command dijiye."
+        if (trimmed.isEmpty() && capturedImageBytes == null) return "Command dijiye."
+
+        // 1. ON-DEVICE OFFLINE ENGINE FALLBACK
+        if (!isNetworkAvailable()) {
+            return executeOfflineFallback(trimmed)
+        }
 
         val service = AgentAccessibilityService.instance
-        service?.showIsland("Thinking...")
+        service?.showIsland("Processing...")
 
-        // Max autonomous steps limit to prevent infinite loops
-        val maxSteps = 8
-        var currentStep = 0
-        var taskCompleted = false
-        var finalFeedback = ""
+        val screenHierarchy = service?.getIndexedScreenElements() ?: "Screen not accessible."
 
-        while (currentStep < maxSteps && !taskCompleted) {
-            currentStep++
-            val screenHierarchy = service?.getIndexedScreenElements() ?: "No screen access."
+        val prompt = """
+You are Mira, an ultra-advanced Autonomous Android Operator with Full OS Control.
+Capabilities:
+- Auto-Messaging: WhatsApp / Telegram chats, typing, sending.
+- Quick Notifications: Direct reply via intercepted notifications.
+- Schedule Routines: Set cron / alarm routines.
+- Vision Analysis: Inspect captured camera images.
+- System Actions: Shizuku privileged shell, accessibility clicks, volume, torch, calls.
 
-            val prompt = """
-You are the world's most capable Autonomous Android Agent (Mira).
-Goal: Complete the user's task on Android completely hands-free.
-
-User Task: "$trimmed"
-Step Number: $currentStep / $maxSteps
-
-Visible Screen Elements with Indexed IDs:
+Current Screen Elements:
 $screenHierarchy
 
-Conversation Memory:
+Recent History:
 ${history.takeLast(4).joinToString("\n")}
 
 AVAILABLE ACTIONS:
-- "open_app": (param: package/app name) Launch application
-- "click_id": (param: integer ID like 2) Tap the indexed element
-- "click_coords": (x: float, y: float) Click exact pixel
-- "type": (id: integer ID or 0 for active, text: string) Type text
-- "scroll_down" / "scroll_up"
-- "home" / "back" / "recents" / "play_pause" / "toggle_torch"
+- "whatsapp_send": (param: target contact, text: message content)
+- "telegram_send": (param: target contact, text: message content)
+- "notification_reply": (param: sender name, text: reply content)
+- "schedule_routine": (param: minutes from now as integer e.g. "30", text: command to run)
+- "open_app": (param: app name)
+- "click_id": (id: integer ID)
+- "type": (id: integer ID or 0, text: string)
+- "home", "back", "recents", "play_pause", "toggle_torch"
 - "call": (param: contact name)
-- "read_screen": (param: text summary of what is seen) Read screen content out loud
-- "done": (param: completion message in user's spoken language) Task finished successfully
-- "reply": (param: conversational reply in user's language) For normal conversation
+- "done": (param: voice reply to user)
+- "reply": (param: conversational text)
 
-DECISION RULES:
-1. Always analyze if current screen needs an app launch or an element click to reach the goal.
-2. If unexpected popups/ads appear, close them or click dismiss.
-3. If the user asks a question about the screen, use "read_screen" or "done".
-4. When finished, call "done".
-
-OUTPUT FORMAT: Return STRICT VALID JSON ONLY (No markdown, no triple backticks):
+Output STRICT JSON ONLY:
 {
-  "action": "open_app"|"click_id"|"click_coords"|"type"|"scroll_down"|"scroll_up"|"home"|"back"|"recents"|"play_pause"|"toggle_torch"|"call"|"read_screen"|"done"|"reply",
-  "param": "string param or text",
+  "action": "whatsapp_send"|"telegram_send"|"notification_reply"|"schedule_routine"|"open_app"|"click_id"|"type"|"home"|"back"|"recents"|"play_pause"|"toggle_torch"|"call"|"done"|"reply",
+  "param": "contact/app/sender",
+  "text": "message/routine content",
   "id": 0,
-  "x": 0.0,
-  "y": 0.0,
-  "reason": "short explanation of why this step was taken"
+  "reply": "natural voice confirmation in user's language"
 }
-            """.trimIndent()
+        """.trimIndent()
 
-            val raw = ai.ask(prompt)
-            val clean = raw.replace("```json", "").replace("```", "").trim()
+        val fullPrompt = "$prompt\n\nUser: \"$trimmed\""
+        val rawAi = ai.ask(fullPrompt, capturedImageBytes)
+        val cleanJson = rawAi.replace("```json", "").replace("```", "").trim()
 
-            try {
-                val stepJson = JSONObject(clean)
-                val action = stepJson.optString("action")
-                val param = stepJson.optString("param")
-                val id = stepJson.optInt("id", 0)
-                val x = stepJson.optDouble("x", 0.0).toFloat()
-                val y = stepJson.optDouble("y", 0.0).toFloat()
-                val reason = stepJson.optString("reason")
+        var feedback = ""
 
-                service?.showIsland("Step $currentStep: $action")
+        try {
+            val json = JSONObject(cleanJson)
+            val action = json.optString("action")
+            val param = json.optString("param")
+            val text = json.optString("text")
+            val replyMsg = json.optString("reply")
 
-                when (action) {
-                    "open_app" -> openApp(param)
-                    "click_id" -> service?.clickElementById(id)
-                    "click_coords" -> service?.clickCoordinates(x, y)
-                    "type" -> service?.typeTextIntoFocusedOrById(if (id > 0) id else null, param)
-                    "scroll_down" -> {
-                        val dm = context.resources.displayMetrics
-                        service?.swipe(dm.widthPixels / 2f, dm.heightPixels * 0.75f, dm.widthPixels / 2f, dm.heightPixels * 0.25f)
-                    }
-                    "scroll_up" -> {
-                        val dm = context.resources.displayMetrics
-                        service?.swipe(dm.widthPixels / 2f, dm.heightPixels * 0.25f, dm.widthPixels / 2f, dm.heightPixels * 0.75f)
-                    }
-                    "home" -> shizuku.run("home")
-                    "back" -> shizuku.run("back")
-                    "recents" -> shizuku.run("recent")
-                    "play_pause" -> shizuku.run("play_pause")
-                    "toggle_torch" -> toggleTorch()
-                    "call" -> autoCall(param)
-                    "read_screen", "done", "reply" -> {
-                        finalFeedback = param.ifBlank { reason }
-                        taskCompleted = true
-                    }
+            when (action) {
+                "whatsapp_send" -> {
+                    feedback = sendInstantMessengerMessage("com.whatsapp", param, text)
                 }
-                delay(1200) // Screen rendering & animation wait
-            } catch (_: Exception) {
-                finalFeedback = ai.ask(trimmed)
-                taskCompleted = true
+                "telegram_send" -> {
+                    feedback = sendInstantMessengerMessage("org.telegram.messenger", param, text)
+                }
+                "notification_reply" -> {
+                    val ok = SmartNotificationService.instance?.replyToSender(param, text) ?: false
+                    feedback = if (ok) "$param ko direct reply bhej diya: '$text'" else "Active notification nahi mila."
+                }
+                "schedule_routine" -> {
+                    val minutes = param.toIntOrNull() ?: 10
+                    scheduleRoutine(minutes, text)
+                    feedback = "$minutes minute baad routine schedule kar diya: '$text'"
+                }
+                "open_app" -> {
+                    openApp(param)
+                    feedback = replyMsg.ifBlank { "$param open kar diya." }
+                }
+                "click_id" -> {
+                    service?.clickElementById(json.optInt("id", 0))
+                    feedback = replyMsg.ifBlank { "Clicked element." }
+                }
+                "type" -> {
+                    service?.typeTextIntoFocusedOrById(if (json.optInt("id", 0) > 0) json.optInt("id") else null, text)
+                    feedback = replyMsg.ifBlank { "Text type kar diya." }
+                }
+                "home" -> { shizuku.run("home"); feedback = "Home screen." }
+                "back" -> { shizuku.run("back"); feedback = "Wapas aa gaye." }
+                "recents" -> { shizuku.run("recent"); feedback = "Recents open." }
+                "play_pause" -> { shizuku.run("play_pause"); feedback = "Media toggled." }
+                "toggle_torch" -> { toggleTorch(); feedback = "Torch toggled." }
+                "call" -> { autoCall(param); feedback = "$param ko call lagaya." }
+                "done", "reply" -> { feedback = replyMsg.ifBlank { param.ifBlank { rawAi } } }
+                else -> { feedback = rawAi }
             }
-        }
-
-        if (finalFeedback.isBlank()) {
-            finalFeedback = "Task execute kar diya hai."
+        } catch (_: Exception) {
+            feedback = rawAi
         }
 
         history.add("User: $trimmed")
-        history.add("Agent: $finalFeedback")
+        history.add("Agent: $feedback")
         service?.showIsland("Ready")
-        return finalFeedback
+        return feedback
+    }
+
+    // ---------------- OFFLINE RULE & INTENT ENGINE ----------------
+    private fun executeOfflineFallback(cmd: String): String {
+        val lower = cmd.lowercase()
+        return when {
+            lower.contains("torch") || lower.contains("flashlight") -> {
+                toggleTorch()
+                "Offline Mode: Torch toggle kar diya."
+            }
+            lower.contains("home") || lower.contains("screen") -> {
+                shizuku.run("home")
+                "Offline Mode: Home screen."
+            }
+            lower.contains("back") -> {
+                shizuku.run("back")
+                "Offline Mode: Back."
+            }
+            lower.contains("pause") || lower.contains("play") -> {
+                shizuku.run("play_pause")
+                "Offline Mode: Playback toggled."
+            }
+            lower.contains("volume up") || lower.contains("aawaz badhao") -> {
+                adjustVolume(true)
+                "Offline Mode: Volume badha diya."
+            }
+            lower.contains("volume down") || lower.contains("aawaz kam") -> {
+                adjustVolume(false)
+                "Offline Mode: Volume kam kar diya."
+            }
+            lower.contains("open") || lower.contains("kholo") -> {
+                val app = cmd.substringAfter("open").substringAfter("kholo").trim()
+                openApp(app)
+                "Offline Mode: $app open kar raha hoon."
+            }
+            lower.contains("call") -> {
+                val contact = cmd.substringAfter("call").trim()
+                autoCall(contact)
+                "Offline Mode: $contact ko call mila raha hoon."
+            }
+            else -> "Internet offline hai. Basic commands bole jaise torch, volume, home, call."
+        }
+    }
+
+    private suspend fun sendInstantMessengerMessage(packageName: String, contact: String, message: String): String {
+        val pm = context.packageManager
+        val launchIntent = pm.getLaunchIntentForPackage(packageName) ?: return "$packageName installed nahi hai."
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(launchIntent)
+
+        delay(1800)
+        val service = AgentAccessibilityService.instance
+
+        // Search contact
+        service?.clickElementById(1) // Usually search icon
+        delay(600)
+        service?.typeTextIntoFocusedOrById(null, contact)
+        delay(1000)
+
+        // Tap first matched contact
+        service?.clickCoordinates(300f, 380f)
+        delay(1200)
+
+        // Type message & send
+        service?.typeTextIntoFocusedOrById(null, message)
+        delay(600)
+
+        val sent = service?.clickElementById(0) ?: false
+        if (!sent) {
+            val dm = context.resources.displayMetrics
+            service?.clickCoordinates(dm.widthPixels - 80f, dm.heightPixels - 120f)
+        }
+
+        return "$contact ko message bhej diya: '$message'"
+    }
+
+    private fun scheduleRoutine(delayMinutes: Int, task: String) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(context, RoutineAlarmReceiver::class.java).apply {
+            putExtra("ROUTINE_TASK", task)
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            task.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val triggerTime = Calendar.getInstance().apply {
+            add(Calendar.MINUTE, delayMinutes)
+        }.timeInMillis
+
+        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val cap = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun adjustVolume(increase: Boolean) {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val dir = if (increase) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+        am.adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, AudioManager.FLAG_SHOW_UI)
+    }
+
+    private fun toggleTorch() {
+        try {
+            val cam = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val id = cam.cameraIdList.firstOrNull() ?: return
+            isTorchOn = !isTorchOn
+            cam.setTorchMode(id, isTorchOn)
+        } catch (_: Exception) {}
     }
 
     private fun openApp(name: String) {
@@ -161,14 +278,5 @@ OUTPUT FORMAT: Return STRICT VALID JSON ONLY (No markdown, no triple backticks):
             }
             context.startActivity(i)
         }
-    }
-
-    private fun toggleTorch() {
-        try {
-            val cam = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val id = cam.cameraIdList.firstOrNull() ?: return
-            isTorchOn = !isTorchOn
-            cam.setTorchMode(id, isTorchOn)
-        } catch (_: Exception) {}
     }
 }

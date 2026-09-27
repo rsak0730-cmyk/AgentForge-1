@@ -1,24 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Hardware & Media Permissions -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-
-    <!-- Telephony & Contacts Permissions -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
-
-    <!-- Notifications & Background Services -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Hardware Features -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
 
@@ -30,7 +26,6 @@
         android:allowBackup="false"
         android:supportsRtl="true">
 
-        <!-- Main Launcher Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -40,7 +35,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Call State Monitor for Live Voicemail -->
         <receiver
             android:name=".service.CallStateReceiver"
             android:exported="true">
@@ -49,19 +43,31 @@
             </intent-filter>
         </receiver>
 
-        <!-- Foreground Service: Voicemail Audio Capture -->
+        <!-- Cron / Routine Scheduler Broadcast Receiver -->
+        <receiver
+            android:name=".service.RoutineAlarmReceiver"
+            android:exported="true" />
+
         <service
             android:name=".service.CallVoicemailService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
-        <!-- Foreground Service: Background Wake-Word Engine -->
         <service
             android:name=".service.VoiceListenerService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
-        <!-- Accessibility Automation Service (Screen Inspection & Dynamic Island) -->
+        <!-- Notification Interceptor & Background Auto-Reply -->
+        <service
+            android:name=".service.SmartNotificationService"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".service.AgentAccessibilityService"
             android:exported="false"
@@ -75,7 +81,6 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- Shizuku Privileged IPC Provider -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
@@ -84,5 +89,4 @@
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
     </application>
-
 </manifest>
