@@ -4,10 +4,8 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -16,11 +14,11 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import androidx.core.app.NotificationCompat
+import com.agentforge.app.R
 import com.agentforge.app.agent.AgentEngine
 import com.agentforge.app.agent.AiClient
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
-import com.agentforge.app.security.VoiceprintManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,9 +34,9 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private lateinit var prefs: AppPrefs
     private lateinit var shizuku: ShizukuBridge
     private lateinit var engine: AgentEngine
-    private lateinit var voiceprintManager: VoiceprintManager
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
+
     private var isAwaitingCommand = false
 
     override fun onCreate() {
@@ -46,7 +44,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
         prefs = AppPrefs(this)
         shizuku = ShizukuBridge(this)
         engine = AgentEngine(this, AiClient(prefs), shizuku)
-        voiceprintManager = VoiceprintManager(this)
         tts = TextToSpeech(this, this)
 
         startForegroundNotification()
@@ -62,7 +59,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
         }
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle(prefs.name)
-            .setContentText("Wake-word active (${prefs.wakeWord}) • Security: ${if (prefs.isVoiceprintEnrolled) "Voice Locked" else "Open"}")
+            .setContentText("Wake-word listening active (${prefs.wakeWord})")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .build()
         startForeground(101, notification)
@@ -76,18 +73,12 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                 override fun onReadyForSpeech(params: Bundle?) {}
                 override fun onBeginningOfSpeech() {}
                 override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {
-                    // Check live incoming voiceprint
-                    if (buffer != null && prefs.isVoiceprintEnrolled) {
-                        val features = voiceprintManager.extractAcousticFeatures(buffer, buffer.size)
-                        val match = voiceprintManager.verifySpeaker(features)
-                        if (!match) {
-                            AgentAccessibilityService.instance?.showIsland("Unauthorized Voice")
-                        }
-                    }
-                }
+                override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
-                override fun onError(error: Int) { restartListening() }
+                override fun onError(error: Int) {
+                    // Fail ya silence hone par background loop restart karo
+                    restartListening()
+                }
 
                 override fun onResults(results: Bundle?) {
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -124,42 +115,50 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private fun handleSpokenInput(spoken: String) {
         val wake = prefs.wakeWord.lowercase(Locale.getDefault()).trim()
 
+        // 1. Shutdown / Sleep Mode Check
         if (prefs.isSleeping) {
-            if (spoken.contains(wake) && (spoken.contains("wake up") || spoken.contains("uth jao") || spoken.contains("on ho jao"))) {
+            if (spoken.contains(wake) && (spoken.contains("wake up") || spoken.contains("uth jao") || spoken.contains("on ho jao") || spoken.contains("jago"))) {
                 prefs.isSleeping = false
                 speakAndStop("I am awake now. What can I do for you?")
                 isAwaitingCommand = true
                 return
             } else {
+                // Sleep mode me hai aur wake command nahi hai to ignore karo aur dobara listen karo
                 restartListening()
                 return
             }
         }
 
-        if (spoken.contains("shutdown") || spoken.contains("so jao") || spoken.contains("turn off")) {
+        // 2. Shut Down / Turn Off Command Check
+        if (spoken.contains("shutdown") || spoken.contains("shut down") || spoken.contains("so jao") || spoken.contains("turn off") || spoken.contains("band ho jao")) {
             prefs.isSleeping = true
             isAwaitingCommand = false
-            speakAndStop("Shutting down. Say wake up to activate me.")
+            speakAndStop("Shutting down. Say wake up to activate me again.")
             return
         }
 
+        // 3. Siri-style Trigger Logic
         if (spoken.contains(wake)) {
             val commandAfterWake = spoken.substringAfter(wake).trim()
             if (commandAfterWake.isNotEmpty()) {
+                // e.g. "Hey Mira open YouTube" -> Turant action execute karo
                 processCommand(commandAfterWake)
             } else {
+                // Sirf "Hey Mira" bola -> Promp do aur next command ke liye listen karo
                 isAwaitingCommand = true
                 speakThenListen("Yes? I am listening.")
             }
             return
         }
 
+        // 4. Follow-up Command Execution
         if (isAwaitingCommand) {
             isAwaitingCommand = false
             processCommand(spoken)
             return
         }
 
+        // Agar bina wake-word ka random noise/sound hai toh silently reset
         restartListening()
     }
 
@@ -167,6 +166,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
         AgentAccessibilityService.instance?.showIsland("Processing: $cmd")
         scope.launch {
             val reply = engine.execute(cmd)
+            // Task complete hone ke baad bolkar mic turant band kar do
             speakAndStop(reply)
         }
     }
@@ -174,6 +174,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private fun speakAndStop(text: String) {
         recognizer?.stopListening()
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "UTTERANCE_ID")
+        // Bolne ke baad regular wake-word listening pe wapas jao
         restartListening()
     }
 
