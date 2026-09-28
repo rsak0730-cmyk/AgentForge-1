@@ -39,16 +39,12 @@ class AppPrefs(context: Context) {
         get() = prefs.getBoolean("is_sleeping", false)
         set(v) = prefs.edit().putBoolean("is_sleeping", v).apply()
 
-    // ---------------- DYNAMIC COUPLE NICKNAME & REEL MEMORY ----------------
+    // ---------------- CASUAL NICKNAME PREFERENCE ----------------
     var userPetName: String
-        get() = prefs.getString("user_pet_name", "Shona") ?: "Shona"
+        get() = prefs.getString("user_pet_name", "Buddy") ?: "Buddy"
         set(v) = prefs.edit().putString("user_pet_name", v).apply()
 
-    var affectionScore: Int
-        get() = prefs.getInt("affection_score", 90)
-        set(v) = prefs.edit().putInt("affection_score", v.coerceIn(1, 100)).apply()
-
-    // ---------------- AI API VAULT (DEFAULT TO gemini-3.8-flash) ----------------
+    // ---------------- AI API VAULT ----------------
     var provider: String
         get() = prefs.getString("ai_provider", "gemini") ?: "gemini"
         set(v) = prefs.edit().putString("ai_provider", v).apply()
