@@ -26,6 +26,7 @@ import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
 import com.agentforge.app.agent.AgentEngine
 import com.agentforge.app.agent.AiClient
+import com.agentforge.app.agent.DialectAdapter
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
 import com.agentforge.app.security.VoiceprintManager
@@ -70,7 +71,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
         tts = TextToSpeech(this, this)
         toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85)
 
-        // Pocket / Proximity Guard
+        // Pocket / Proximity Guard Setup
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
         proximitySensor?.let {
@@ -106,7 +107,8 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
         startForeground(101, notification)
     }
 
-    // ---------------- PROXIMITY GUARD ----------------
+    // ---------------- PROXIMITY & POCKET GUARD ----------------
+
     override fun onSensorChanged(event: SensorEvent?) {
         if (event?.sensor?.type == Sensor.TYPE_PROXIMITY) {
             val distance = event.values[0]
@@ -123,7 +125,8 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    // ---------------- RECOGNIZER ENGINE ----------------
+    // ---------------- SPEECH RECOGNIZER LIFECYCLE ----------------
+
     private fun initRecognizerAndStart() {
         if (!SpeechRecognizer.isRecognitionAvailable(this) || isPhoneInPocket) return
 
@@ -134,13 +137,16 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
                 override fun onReadyForSpeech(params: Bundle?) {
                     isListeningNow = true
                 }
+
                 override fun onBeginningOfSpeech() {}
+
                 override fun onRmsChanged(rmsdB: Float) {
-                    // Update visual wave amplitude in dynamic island if command is active
                     if (isAwaitingDirectCommand) {
-                        AgentAccessibilityService.instance?.showIsland("Listening: ${"|".repeat(((rmsdB + 2) / 2).toInt().coerceIn(1, 6))}")
+                        val bars = ((rmsdB + 2) / 2).toInt().coerceIn(1, 6)
+                        AgentAccessibilityService.instance?.showIsland("Listening: ${"|".repeat(bars)}")
                     }
                 }
+
                 override fun onBufferReceived(buffer: ByteArray?) {
                     if (buffer != null && prefs.isVoiceprintEnrolled) {
                         val features = voiceprintManager.extractAcousticFeatures(buffer, buffer.size)
@@ -149,21 +155,25 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
                         }
                     }
                 }
+
                 override fun onEndOfSpeech() {
                     isListeningNow = false
                 }
+
                 override fun onError(error: Int) {
                     isListeningNow = false
                     if (!prefs.isSleeping && !isEngineBusy && !isPhoneInPocket) {
                         safeRestart(1000)
                     }
                 }
+
                 override fun onResults(results: Bundle?) {
                     isListeningNow = false
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val spoken = matches?.firstOrNull()?.lowercase(Locale.getDefault())?.trim() ?: ""
                     handleSpokenText(spoken)
                 }
+
                 override fun onPartialResults(partialResults: Bundle?) {}
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
@@ -174,6 +184,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
 
     private fun launchRecognitionIntent() {
         if (prefs.isSleeping || isEngineBusy || isListeningNow || isPhoneInPocket) return
+
         try {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -197,23 +208,24 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
         }
     }
 
-    // ---------------- SOUND & HAPTIC FEEDBACK ----------------
+    // ---------------- AUDIO & HAPTIC FEEDBACK ----------------
+
     private fun triggerWakeFeedback() {
         try {
-            // Play short tech chime
             toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 120)
 
-            // Distinctive Haptic tap
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
                 vibratorManager.defaultVibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
             } else {
                 @Suppress("DEPRECATION")
                 val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-                vibrator.vibrate(VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE))
+                vibrator.vibrate(VibrationEffect.createOneShot(45, VibrationEffect.DEFAULT_AMPLITUDE))
             }
         } catch (_: Throwable) {}
     }
+
+    // ---------------- INTENT & WAKE-WORD LOGIC ----------------
 
     private fun handleSpokenText(spoken: String) {
         if (spoken.isBlank()) {
@@ -223,21 +235,21 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
 
         val wake = prefs.wakeWord.lowercase(Locale.getDefault()).trim()
 
-        // 1. WAKE UP FROM SLEEP
+        // 1. WAKE UP COMMAND (From Sleep State)
         if (prefs.isSleeping) {
-            if (spoken.contains("wake up") || spoken.contains("uth jao") || spoken.contains("on ho jao")) {
+            if (spoken.contains("wake up") || spoken.contains("uth jao") || spoken.contains("on ho jao") || spoken.contains(wake)) {
                 prefs.isSleeping = false
                 triggerWakeFeedback()
-                updateServiceNotification("Ready for '${prefs.wakeWord}'")
+                updateServiceNotification("Active • '${prefs.wakeWord}'")
                 AgentAccessibilityService.instance?.showIsland("Mira: Online")
                 speakAndFollowUp("Aapke sath hoon, boliye.", expectReply = true)
             }
             return
         }
 
-        // 2. SHUTDOWN / SLEEP
+        // 2. SHUTDOWN / SLEEP TRIGGER (Full Physical Mic Release)
         if (spoken.contains("shutdown") || spoken.contains("shut down") || spoken.contains("so jao") ||
-            spoken.contains("turn off") || spoken.contains("band ho jao") || spoken.contains("sleep")) {
+            spoken.contains("turn off") || spoken.contains("band ho jao") || spoken.contains("sleep") || spoken.contains("chup raho")) {
 
             prefs.isSleeping = true
             isAwaitingDirectCommand = false
@@ -283,9 +295,16 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
         }
     }
 
+    // ---------------- DIALECT-AWARE TTS ----------------
+
     private fun speakAndFollowUp(text: String, expectReply: Boolean) {
         destroyRecognizer()
         isEngineBusy = true
+
+        val dialect = DialectAdapter.detectDialect(text)
+        tts?.language = dialect.ttsLocale
+        tts?.setPitch(dialect.ttsPitch)
+        tts?.setSpeechRate(dialect.ttsSpeechRate)
 
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {

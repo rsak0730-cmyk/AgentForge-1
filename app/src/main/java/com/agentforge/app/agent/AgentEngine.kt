@@ -11,7 +11,7 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.BatteryManager
 import android.provider.ContactsContract
-import android.provider.Settings
+import com.agentforge.app.automation.CallAutoAcceptManager
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.MemoryVault
 import com.agentforge.app.service.AgentAccessibilityService
@@ -30,13 +30,23 @@ class AgentEngine(
 ) {
     private val conversationHistory = mutableListOf<String>()
     private val memory = MemoryVault(context)
+    private val callManager = CallAutoAcceptManager(context, shizuku)
     private var isTorchOn = false
 
     suspend fun execute(userQuery: String, capturedImageBytes: ByteArray? = null): String {
         val trimmed = userQuery.trim()
         if (trimmed.isEmpty() && capturedImageBytes == null) return "Boliye, sun rahi hoon."
 
-        // 1. DURESS / PANIC TRIGGER CHECK
+        // Direct Intercom voice commands
+        if (trimmed.contains("call utha lo", ignoreCase = true) || trimmed.contains("receive call", ignoreCase = true) || trimmed.contains("answer call", ignoreCase = true)) {
+            val ok = callManager.acceptIncomingCall()
+            return if (ok) "Call connect kar di hai speaker par." else "Call answer nahi ho paayi."
+        }
+        if (trimmed.contains("call kaat do", ignoreCase = true) || trimmed.contains("reject call", ignoreCase = true)) {
+            val ok = callManager.rejectIncomingCall()
+            return if (ok) "Call reject kar di." else "Call reject nahi ho paayi."
+        }
+
         if (trimmed.contains("cancel everything red", ignoreCase = true) || trimmed.contains("code black emergency", ignoreCase = true)) {
             return triggerPanicDuressMode()
         }
@@ -53,38 +63,39 @@ class AgentEngine(
         val screenHierarchy = service?.getIndexedScreenElements() ?: "Screen unavailable"
         val knownMemory = memory.getMemorySummary()
 
-        val prompt = """
-You are Mira: An autonomous, proactive, friendly and witty personal OS companion.
-Tone: Natural, conversational Hinglish/Bengali/English mix with humor.
+        // Dynamic Dialect & Slang Detection
+        val dialect = DialectAdapter.detectDialect(trimmed)
 
-User Profile & Memories:
+        val prompt = """
+You are Mira, an autonomous and intelligent Android OS companion.
+${dialect.systemPromptInstructions}
+
+User Memory Context:
 $knownMemory
 
-Current Screen:
+Current Visible Screen Hierarchy:
 $screenHierarchy
 
-Recent Chat:
+Recent Conversation History:
 ${conversationHistory.takeLast(4).joinToString("\n")}
 
-SUPPORTED ADVANCED CAPABILITIES:
-- "whatsapp_meme": (param: contact, text: search keywords or sarcastic meme text)
-- "morning_briefing": (Generate full morning report with weather, battery & schedules)
-- "bedtime_routine": (Activate DND, night comfort shield, verify tomorrow's alarms)
-- "macro_pipeline": (param: pipeline name, list of tasks to execute sequentially)
-- "summarize_screen": (Summarize current screen)
-- "remember_fact": (param: new fact about user)
+SUPPORTED ACTIONS:
+- "solve_study_problem": (Analyze current screen questions/notes, parse problem, and explain solution concisely with steps/formulas)
+- "accept_call", "reject_call"
+- "save_screen_notes", "react_story", "identify_music", "whatsapp_meme"
+- "morning_briefing", "bedtime_routine", "macro_pipeline"
+- "summarize_screen", "remember_fact", "open_app", "home", "back", "recents"
+- "play_pause", "toggle_torch", "volume_up", "volume_down", "call"
 - "whatsapp_send", "telegram_send", "notification_reply", "schedule_routine"
-- "open_app", "click_id", "type", "home", "back", "recents", "play_pause", "toggle_torch", "volume_up", "volume_down", "call"
 - "conversational_reply"
 
 Output STRICT JSON ONLY:
 {
-  "action": "whatsapp_meme"|"morning_briefing"|"bedtime_routine"|"macro_pipeline"|"summarize_screen"|"remember_fact"|"open_app"|"home"|"back"|"recents"|"play_pause"|"toggle_torch"|"volume_up"|"volume_down"|"call"|"whatsapp_send"|"telegram_send"|"notification_reply"|"schedule_routine"|"conversational_reply",
-  "param": "contact/app/routine/fact",
-  "text": "message/routine content",
+  "action": "solve_study_problem"|"accept_call"|"reject_call"|"save_screen_notes"|"react_story"|"identify_music"|"whatsapp_meme"|"morning_briefing"|"bedtime_routine"|"macro_pipeline"|"summarize_screen"|"remember_fact"|"open_app"|"home"|"back"|"recents"|"play_pause"|"toggle_torch"|"volume_up"|"volume_down"|"call"|"whatsapp_send"|"telegram_send"|"notification_reply"|"schedule_routine"|"conversational_reply",
+  "param": "target/app/fact",
+  "text": "content",
   "id": 0,
-  "pipeline_steps": ["step1", "step2"],
-  "reply": "natural voice response in user's friendly dialect"
+  "reply": "voice response strictly formatted in the user's dialect (Bangla/Hinglish/English)"
 }
         """.trimIndent()
 
@@ -101,46 +112,59 @@ Output STRICT JSON ONLY:
             val replyMsg = json.optString("reply")
 
             when (action) {
-                "whatsapp_meme" -> {
-                    feedback = sendMemeStickerReply("com.whatsapp", param, text)
+                "solve_study_problem" -> {
+                    feedback = replyMsg.ifBlank { "Problem solve kar di hai: $text" }
+                    service?.showIsland("Study: Solution Ready")
                 }
-                "morning_briefing" -> {
-                    feedback = executeMorningBriefing()
+                "accept_call" -> {
+                    callManager.acceptIncomingCall()
+                    feedback = replyMsg.ifBlank { "Call connect kar diya." }
                 }
-                "bedtime_routine" -> {
-                    feedback = executeBedtimeRoutine()
+                "reject_call" -> {
+                    callManager.rejectIncomingCall()
+                    feedback = replyMsg.ifBlank { "Call decline kar diya." }
                 }
-                "macro_pipeline" -> {
-                    val steps = json.optJSONArray("pipeline_steps") ?: JSONArray()
-                    feedback = executeMacroPipeline(steps, replyMsg)
+                "save_screen_notes" -> feedback = service?.saveVisibleTextToNotes() ?: "Accessibility not ready."
+                "react_story" -> feedback = reactToVisibleStory(text, replyMsg)
+                "identify_music" -> {
+                    feedback = replyMsg.ifBlank { "Music listen kar rahi hoon..." }
+                    service?.showIsland("Listening...", isMusicPlaying = true)
                 }
+                "whatsapp_meme" -> feedback = sendMemeStickerReply("com.whatsapp", param, text)
+                "morning_briefing" -> feedback = executeMorningBriefing()
+                "bedtime_routine" -> feedback = executeBedtimeRoutine()
+                "macro_pipeline" -> feedback = executeMacroPipeline(json.optJSONArray("pipeline_steps") ?: JSONArray(), replyMsg)
                 "whatsapp_send" -> feedback = sendInstantMessengerMessage("com.whatsapp", param, text)
                 "telegram_send" -> feedback = sendInstantMessengerMessage("org.telegram.messenger", param, text)
                 "notification_reply" -> {
                     val ok = SmartNotificationService.instance?.replyToSender(param, text) ?: false
-                    feedback = if (ok) replyMsg.ifBlank { "$param ko auto-reply bhej diya!" } else "Notification nahi mila reply ke liye."
+                    feedback = if (ok) replyMsg.ifBlank { "$param ko bhej diya reply!" } else "Notification nahi mila."
                 }
                 "schedule_routine" -> {
                     val minutes = param.toIntOrNull() ?: 10
                     scheduleRoutine(minutes, text)
                     feedback = replyMsg.ifBlank { "Routine schedule kar diya." }
                 }
-                "open_app" -> { openApp(param); feedback = replyMsg.ifBlank { "$param open kar diya." } }
+                "open_app" -> { openApp(param); feedback = replyMsg.ifBlank { "$param khol diya." } }
                 "click_id" -> { service?.clickElementById(json.optInt("id", 0)); feedback = replyMsg.ifBlank { "Tapped." } }
                 "type" -> {
                     service?.typeTextIntoFocusedOrById(if (json.optInt("id", 0) > 0) json.optInt("id") else null, text)
                     feedback = replyMsg.ifBlank { "Typed." }
                 }
                 "home" -> { shizuku.run("home"); feedback = replyMsg.ifBlank { "Home screen." } }
-                "back" -> { shizuku.run("back"); feedback = replyMsg.ifBlank { "Peeche aa gaye." } }
-                "recents" -> { shizuku.run("recent"); feedback = replyMsg.ifBlank { "Recents khol diya." } }
-                "play_pause" -> { shizuku.run("play_pause"); feedback = replyMsg.ifBlank { "Media toggled." } }
+                "back" -> { shizuku.run("back"); feedback = replyMsg.ifBlank { "Back." } }
+                "recents" -> { shizuku.run("recent"); feedback = replyMsg.ifBlank { "Recents apps." } }
+                "play_pause" -> {
+                    shizuku.run("play_pause")
+                    service?.showIsland("Media Active", isMusicPlaying = true)
+                    feedback = replyMsg.ifBlank { "Media toggled." }
+                }
                 "toggle_torch" -> { toggleTorch(); feedback = replyMsg.ifBlank { "Flashlight toggled." } }
                 "volume_up" -> { adjustVolume(true); feedback = replyMsg.ifBlank { "Volume badha diya." } }
                 "volume_down" -> { adjustVolume(false); feedback = replyMsg.ifBlank { "Volume kam kar diya." } }
-                "call" -> { autoCall(param); feedback = replyMsg.ifBlank { "$param ko call connect ho raha hai." } }
-                "summarize_screen" -> feedback = replyMsg.ifBlank { "Screen contents summary: ${screenHierarchy.take(240)}" }
-                "remember_fact" -> { memory.saveFact(param); feedback = replyMsg.ifBlank { "Hamesha yaad rakhungi!" } }
+                "call" -> { autoCall(param); feedback = replyMsg.ifBlank { "$param ko call mila rahi hoon." } }
+                "summarize_screen" -> feedback = replyMsg.ifBlank { "Screen summary: ${screenHierarchy.take(220)}" }
+                "remember_fact" -> { memory.saveFact(param); feedback = replyMsg.ifBlank { "Yaad rakhungi!" } }
                 "conversational_reply" -> feedback = replyMsg.ifBlank { rawAi }
                 else -> feedback = replyMsg.ifBlank { rawAi }
             }
@@ -154,72 +178,64 @@ Output STRICT JSON ONLY:
         return feedback
     }
 
-    // ---------------- SECRET DURESS / PANIC MODE ----------------
-    private fun triggerPanicDuressMode(): String {
-        // Silently close overlay & kill privileged access
-        AgentAccessibilityService.instance?.hideIsland()
-        shizuku.run("home")
-
-        // Capture silent tamper marker
-        try {
-            val alertFile = File(context.filesDir, "DURESS_TRIGGERED.txt")
-            alertFile.writeText("Panic mode triggered on: ${System.currentTimeMillis()}")
-        } catch (_: Exception) {}
-
-        // Launch fake System UI Crash
-        AgentAccessibilityService.instance?.showIsland("System UI Not Responding [Error 0x8F]")
-        return "Critical System Error: Kernel thread terminating."
+    private suspend fun reactToVisibleStory(suggestedReaction: String, voiceReply: String): String {
+        val service = AgentAccessibilityService.instance
+        service?.typeTextIntoFocusedOrById(null, suggestedReaction)
+        delay(500)
+        val dm = context.resources.displayMetrics
+        service?.clickCoordinates(dm.widthPixels - 80f, dm.heightPixels - 120f)
+        return voiceReply.ifBlank { "Story reaction bhej diya: '$suggestedReaction'" }
     }
 
-    // ---------------- MORNING BRIEFING & NIGHT BEDTIME ----------------
+    private fun triggerPanicDuressMode(): String {
+        AgentAccessibilityService.instance?.hideIsland()
+        shizuku.run("home")
+        try {
+            val alertFile = File(context.filesDir, "DURESS_TRIGGERED.txt")
+            alertFile.writeText("Duress at: ${System.currentTimeMillis()}")
+        } catch (_: Exception) {}
+        AgentAccessibilityService.instance?.showIsland("System UI Error [0x8F]")
+        return "Critical: System halted."
+    }
+
     private fun executeMorningBriefing(): String {
         val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         val battery = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         val greet = if (hour < 12) "Good morning" else "Hello"
-
-        return "$greet boss! Battery abhi $battery% hai. Weather pleasant hai lagbhag 28°C. Saare overnight notifications sorted hain. Kahiye toh morning music start kar doon?"
+        return "$greet boss! Battery $battery% hai. Sabhi background routines synchronized hain. Schedule start karein?"
     }
 
     private fun executeBedtimeRoutine(): String {
-        // Mute stream and adjust night comfort
         adjustVolume(false)
         adjustVolume(false)
         shizuku.run("home")
         AgentAccessibilityService.instance?.showIsland("Bedtime Mode Active")
-        return "Good night boss! DND active kar diya hai, volume kam hai, aur kal subah ke alerts set hain. So jaiye araam se."
+        return "Shubh raatri boss! Volume mute kar diya hai, screen shield active hai. Kal subah ke alarms verified hain."
     }
 
-    // ---------------- MACRO TASK PIPELINE ----------------
     private suspend fun executeMacroPipeline(steps: JSONArray, confirmation: String): String {
         for (i in 0 until steps.length()) {
             val step = steps.optString(i).lowercase()
             when {
                 step.contains("dnd") -> adjustVolume(false)
-                step.contains("brightness") -> {}
                 step.contains("home") -> shizuku.run("home")
                 step.contains("recents") -> shizuku.run("recent")
-                step.contains("open") -> {
-                    val app = step.substringAfter("open").trim()
-                    openApp(app)
-                }
+                step.contains("open") -> openApp(step.substringAfter("open").trim())
             }
             delay(800)
         }
-        return confirmation.ifBlank { "Macro pipeline executed successfully!" }
+        return confirmation.ifBlank { "Macro steps executed!" }
     }
 
-    // ---------------- AUTO-MEME / STICKER INJECTOR ----------------
     private suspend fun sendMemeStickerReply(packageName: String, contact: String, memeQuery: String): String {
         val pm = context.packageManager
-        val launchIntent = pm.getLaunchIntentForPackage(packageName) ?: return "$packageName nahi mila."
+        val launchIntent = pm.getLaunchIntentForPackage(packageName) ?: return "$packageName missing."
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(launchIntent)
 
         delay(1800)
         val service = AgentAccessibilityService.instance
-
-        // Locate contact and prepare meme response
         service?.clickElementById(1)
         delay(600)
         service?.typeTextIntoFocusedOrById(null, contact)
@@ -227,18 +243,15 @@ Output STRICT JSON ONLY:
         service?.clickCoordinates(300f, 380f)
         delay(1200)
 
-        // Type sarcastic meme caption
         val memeText = "😂 [$memeQuery]"
         service?.typeTextIntoFocusedOrById(null, memeText)
         delay(600)
 
         val dm = context.resources.displayMetrics
         service?.clickCoordinates(dm.widthPixels - 80f, dm.heightPixels - 120f)
-
-        return "$contact ko context-aware meme reaction bhej diya: '$memeText'"
+        return "$contact ko meme reply bhej diya: '$memeText'"
     }
 
-    // ---------------- HELPERS ----------------
     private fun executeOfflineFallback(cmd: String): String {
         val lower = cmd.lowercase()
         return when {
@@ -251,7 +264,7 @@ Output STRICT JSON ONLY:
                 openApp(app)
                 "$app open kar diya."
             }
-            else -> "Offline rule engine active."
+            else -> "Offline fallback ready."
         }
     }
 
@@ -274,7 +287,7 @@ Output STRICT JSON ONLY:
 
         val dm = context.resources.displayMetrics
         service?.clickCoordinates(dm.widthPixels - 80f, dm.heightPixels - 120f)
-        return "$contact ko message bhej diya: '$message'"
+        return "$contact ko bhej diya: '$message'"
     }
 
     private fun scheduleRoutine(delayMinutes: Int, task: String) {
