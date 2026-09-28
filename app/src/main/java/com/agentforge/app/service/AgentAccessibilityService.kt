@@ -67,22 +67,25 @@ class AgentAccessibilityService : AccessibilityService() {
     private lateinit var shizukuBridge: ShizukuBridge
     private lateinit var predictiveEngine: PredictiveActionEngine
 
-    // ---------------- VOLUME KEY HARDWARE TRIGGER ----------------
+    // ---------------- DUAL VOLUME KEY (UP + DOWN) CHORD TRIGGER ----------------
     private val keyHandler = Handler(Looper.getMainLooper())
     private var isVolumeUpPressed = false
-    private var isHoldTriggered = false
+    private var isVolumeDownPressed = false
+    private var isChordHoldTriggered = false
     private var isListeningActive = false
 
-    private val longPressRunnable = Runnable {
-        isHoldTriggered = true
-        isListeningActive = true
-        triggerHaptic(true)
-        showIsland("🎙️ Listening Mode ON")
+    private val chordHoldRunnable = Runnable {
+        if (isVolumeUpPressed && isVolumeDownPressed) {
+            isChordHoldTriggered = true
+            isListeningActive = true
+            triggerHaptic(true)
+            showIsland("🎙️ Listening Mode ON")
 
-        val intent = Intent(this, VoiceListenerService::class.java).apply {
-            action = VoiceListenerService.ACTION_START_LISTENING
+            val intent = Intent(this, VoiceListenerService::class.java).apply {
+                action = VoiceListenerService.ACTION_START_LISTENING
+            }
+            startService(intent)
         }
-        startService(intent)
     }
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener {
@@ -114,32 +117,67 @@ class AgentAccessibilityService : AccessibilityService() {
     override fun onKeyEvent(event: KeyEvent?): Boolean {
         if (event == null) return false
 
-        if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-            when (event.action) {
-                KeyEvent.ACTION_DOWN -> {
-                    if (!isVolumeUpPressed) {
+        val keyCode = event.keyCode
+        val action = event.action
+
+        when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> {
+                when (action) {
+                    KeyEvent.ACTION_DOWN -> {
                         isVolumeUpPressed = true
-                        isHoldTriggered = false
-                        keyHandler.postDelayed(longPressRunnable, 3000)
-                    }
-                    return isHoldTriggered || isListeningActive
-                }
-                KeyEvent.ACTION_UP -> {
-                    keyHandler.removeCallbacks(longPressRunnable)
-                    isVolumeUpPressed = false
-
-                    if (!isHoldTriggered && isListeningActive) {
-                        isListeningActive = false
-                        triggerHaptic(false)
-                        showIsland("🔇 Mic OFF")
-
-                        val intent = Intent(this, VoiceListenerService::class.java).apply {
-                            action = VoiceListenerService.ACTION_STOP_LISTENING
+                        // Check if both keys are now pressed simultaneously
+                        if (isVolumeDownPressed && !isChordHoldTriggered) {
+                            keyHandler.removeCallbacks(chordHoldRunnable)
+                            keyHandler.postDelayed(chordHoldRunnable, 2500)
+                            return true
                         }
-                        startService(intent)
-                        return true
+                        return isListeningActive
                     }
-                    return isHoldTriggered
+                    KeyEvent.ACTION_UP -> {
+                        isVolumeUpPressed = false
+                        keyHandler.removeCallbacks(chordHoldRunnable)
+
+                        // 1-Click to Turn OFF when listening is active
+                        if (isListeningActive && !isChordHoldTriggered) {
+                            isListeningActive = false
+                            triggerHaptic(false)
+                            showIsland("🔇 Mic OFF")
+
+                            val intent = Intent(this, VoiceListenerService::class.java).apply {
+                                action = VoiceListenerService.ACTION_STOP_LISTENING
+                            }
+                            startService(intent)
+                            return true
+                        }
+
+                        if (!isVolumeDownPressed) {
+                            isChordHoldTriggered = false
+                        }
+                        return false
+                    }
+                }
+            }
+
+            KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                when (action) {
+                    KeyEvent.ACTION_DOWN -> {
+                        isVolumeDownPressed = true
+                        // Check if both keys are now pressed simultaneously
+                        if (isVolumeUpPressed && !isChordHoldTriggered) {
+                            keyHandler.removeCallbacks(chordHoldRunnable)
+                            keyHandler.postDelayed(chordHoldRunnable, 2500)
+                            return true
+                        }
+                        return isListeningActive
+                    }
+                    KeyEvent.ACTION_UP -> {
+                        isVolumeDownPressed = false
+                        keyHandler.removeCallbacks(chordHoldRunnable)
+                        if (!isVolumeUpPressed) {
+                            isChordHoldTriggered = false
+                        }
+                        return false
+                    }
                 }
             }
         }
@@ -151,7 +189,7 @@ class AgentAccessibilityService : AccessibilityService() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
                 val effect = if (isStart) {
-                    VibrationEffect.createWaveform(longArrayOf(0, 100, 70, 120), -1)
+                    VibrationEffect.createWaveform(longArrayOf(0, 120, 80, 140), -1)
                 } else {
                     VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
                 }
@@ -159,7 +197,7 @@ class AgentAccessibilityService : AccessibilityService() {
             } else {
                 @Suppress("DEPRECATION")
                 val v = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-                if (isStart) v.vibrate(120) else v.vibrate(35)
+                if (isStart) v.vibrate(140) else v.vibrate(35)
             }
         } catch (_: Exception) {}
     }
