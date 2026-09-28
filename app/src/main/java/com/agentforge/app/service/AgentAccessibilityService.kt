@@ -7,20 +7,25 @@ import android.animation.ValueAnimator
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.graphics.drawable.GradientDrawable
+import android.graphics.RectF
+import android.graphics.SweepGradient
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.agentforge.app.MainActivity
@@ -39,6 +44,8 @@ class AgentAccessibilityService : AccessibilityService() {
             private set
     }
 
+    private var islandRoot: FrameLayout? = null
+    private var borderTrailView: IslandBorderTrailView? = null
     private var islandContainer: LinearLayout? = null
     private var islandTextView: TextView? = null
     private var visualizerBarView: TextView? = null
@@ -48,7 +55,6 @@ class AgentAccessibilityService : AccessibilityService() {
     private var lastClipText: String = ""
     private var waveAnimator: ValueAnimator? = null
 
-    // Detox Guardian Engine State
     private var lastSocialPackage: String? = null
     private var socialStartTimeMs: Long = 0L
     private var hasWarned30Min = false
@@ -83,8 +89,6 @@ class AgentAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-
-        // Social Feed Detox Guardian Tracking
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val pkg = event.packageName?.toString() ?: return
             handleAppSwitchDetox(pkg)
@@ -92,8 +96,8 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     private fun handleAppSwitchDetox(currentPkg: String) {
-        val isSocialApp = currentPkg.contains("instagram.android") || 
-                          currentPkg.contains("youtube") || 
+        val isSocialApp = currentPkg.contains("instagram.android") ||
+                          currentPkg.contains("youtube") ||
                           currentPkg.contains("tiktok")
 
         if (isSocialApp) {
@@ -103,14 +107,10 @@ class AgentAccessibilityService : AccessibilityService() {
                 hasWarned30Min = false
             } else {
                 val elapsedMinutes = (SystemClock.elapsedRealtime() - socialStartTimeMs) / (1000 * 60)
-                
-                // 30 Minutes Soft Warning
                 if (elapsedMinutes >= 30 && !hasWarned30Min) {
                     hasWarned30Min = true
-                    showIsland("⏳ 30m on Reels. Break le lijiye!")
+                    showIsland("⏳ 30m on Reels. Break lijiye!")
                 }
-
-                // 45 Minutes Hard Kickout via Privileged Navigation
                 if (elapsedMinutes >= 45) {
                     showIsland("🛑 45m Limit Reached. Closing...")
                     shizukuBridge.run("home")
@@ -145,6 +145,7 @@ class AgentAccessibilityService : AccessibilityService() {
     override fun onInterrupt() { showIsland("Paused") }
 
     override fun onDestroy() {
+        borderTrailView?.stopAnimation()
         waveAnimator?.cancel()
         clipboardManager?.removePrimaryClipChangedListener(clipListener)
         hideIsland()
@@ -153,28 +154,23 @@ class AgentAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    // ---------------- DYNAMIC ISLAND WIDGET ENGINE ----------------
+    // ---------------- DYNAMIC ISLAND WITH HOLOGRAPHIC CYBER TRAIL ----------------
 
     fun updateIslandGeometry() {
         Handler(Looper.getMainLooper()).post {
             try {
                 val prefs = AppPrefs(this)
-                val view = islandContainer ?: return@post
+                val root = islandRoot ?: return@post
                 val wm = windowManager ?: return@post
 
-                val params = view.layoutParams as? WindowManager.LayoutParams ?: return@post
+                val params = root.layoutParams as? WindowManager.LayoutParams ?: return@post
                 params.x = prefs.islandX.toInt()
                 params.y = prefs.islandY.toInt()
                 params.width = prefs.islandWidth.toInt()
                 params.height = prefs.islandHeight.toInt()
 
-                val shape = GradientDrawable().apply {
-                    setColor(0xEE0B0D18.toInt())
-                    cornerRadius = prefs.islandRadius
-                    setStroke(2, 0xFF00E5FF.toInt())
-                }
-                view.background = shape
-                wm.updateViewLayout(view, params)
+                borderTrailView?.setCornerRadius(prefs.islandRadius)
+                wm.updateViewLayout(root, params)
             } catch (_: Throwable) {}
         }
     }
@@ -188,13 +184,7 @@ class AgentAccessibilityService : AccessibilityService() {
                 val wm = windowManager ?: getSystemService(Context.WINDOW_SERVICE) as WindowManager
                 windowManager = wm
 
-                val shape = GradientDrawable().apply {
-                    setColor(0xEE0B0D18.toInt())
-                    cornerRadius = prefs.islandRadius
-                    setStroke(2, 0xFF00E5FF.toInt())
-                }
-
-                if (islandContainer == null) {
+                if (islandRoot == null) {
                     val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
                         override fun onDoubleTap(e: MotionEvent): Boolean {
                             val intent = Intent(this@AgentAccessibilityService, MainActivity::class.java).apply {
@@ -216,21 +206,29 @@ class AgentAccessibilityService : AccessibilityService() {
                         }
                     })
 
-                    islandContainer = LinearLayout(this).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER
-                        setPadding(14, 4, 14, 4)
-                        background = shape
+                    islandRoot = FrameLayout(this).apply {
                         setOnTouchListener { _, event ->
                             gestureDetector.onTouchEvent(event)
                             true
                         }
                     }
 
+                    // Cyber holographic animated border
+                    borderTrailView = IslandBorderTrailView(this).apply {
+                        setCornerRadius(prefs.islandRadius)
+                    }
+
+                    islandContainer = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER
+                        setPadding(14, 4, 14, 4)
+                        setBackgroundColor(Color.TRANSPARENT)
+                    }
+
                     visualizerBarView = TextView(this).apply {
                         setTextColor(Color(0xFF00E5FF))
                         textSize = 10f
-                        visibility = GONE
+                        visibility = View.GONE
                         setPadding(0, 0, 8, 0)
                     }
 
@@ -243,6 +241,9 @@ class AgentAccessibilityService : AccessibilityService() {
                     islandContainer?.addView(visualizerBarView)
                     islandContainer?.addView(islandTextView)
 
+                    islandRoot?.addView(borderTrailView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                    islandRoot?.addView(islandContainer, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
                     val params = WindowManager.LayoutParams(
                         prefs.islandWidth.toInt(),
                         prefs.islandHeight.toInt(),
@@ -254,21 +255,22 @@ class AgentAccessibilityService : AccessibilityService() {
                         x = prefs.islandX.toInt()
                         y = prefs.islandY.toInt()
                     }
-                    wm.addView(islandContainer, params)
+                    wm.addView(islandRoot, params)
                 } else {
                     updateIslandGeometry()
                 }
 
                 if (isMusicPlaying) {
-                    visualizerBarView?.visibility = VISIBLE
+                    visualizerBarView?.visibility = View.VISIBLE
                     startVisualizerWaveAnimation()
                 } else {
-                    visualizerBarView?.visibility = GONE
+                    visualizerBarView?.visibility = View.GONE
                     waveAnimator?.cancel()
                 }
 
                 val displayText = if (progressPct in 0..100) "[$progressPct%] $text" else text
                 islandTextView?.text = displayText
+
             } catch (_: Throwable) {}
         }
     }
@@ -291,7 +293,10 @@ class AgentAccessibilityService : AccessibilityService() {
         Handler(Looper.getMainLooper()).post {
             try {
                 waveAnimator?.cancel()
-                islandContainer?.let { windowManager?.removeView(it) }
+                borderTrailView?.stopAnimation()
+                islandRoot?.let { windowManager?.removeView(it) }
+                islandRoot = null
+                borderTrailView = null
                 islandContainer = null
                 islandTextView = null
                 visualizerBarView = null
@@ -391,5 +396,74 @@ class AgentAccessibilityService : AccessibilityService() {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToType)
         }
         return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
+    }
+}
+
+// ---------------- HOLOGRAPHIC SWEEP BORDER CANVAS VIEW ----------------
+class IslandBorderTrailView(context: Context) : View(context) {
+    private var cornerRadius = 24f
+    private val strokeWidthPx = 4f
+    private var rotateAngle = 0f
+    private var trailAnimator: ValueAnimator? = null
+
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xEE0B0D18.toInt()
+        style = Paint.Style.FILL
+    }
+
+    private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = strokeWidthPx
+    }
+
+    private val trailColors = intArrayOf(
+        0x00000000,
+        0x2200E5FF.toInt(),
+        0x9900E5FF.toInt(),
+        0xFF00E5FF.toInt(),
+        0xFFFFFFFF.toInt(),
+        0x00000000
+    )
+    private val trailPositions = floatArrayOf(0.0f, 0.4f, 0.7f, 0.9f, 0.98f, 1.0f)
+
+    init {
+        trailAnimator = ValueAnimator.ofFloat(0f, 360f).apply {
+            duration = 2400
+            repeatCount = ValueAnimator.INFINITE
+            addUpdateListener {
+                rotateAngle = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    fun setCornerRadius(r: Float) {
+        cornerRadius = r
+        invalidate()
+    }
+
+    fun stopAnimation() {
+        trailAnimator?.cancel()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0 || h <= 0) return
+
+        val rectF = RectF(strokeWidthPx / 2f, strokeWidthPx / 2f, w - strokeWidthPx / 2f, h - strokeWidthPx / 2f)
+
+        // Draw solid dark glass core
+        canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, bgPaint)
+
+        // Rotate holographic gradient trail
+        canvas.save()
+        canvas.rotate(rotateAngle, w / 2f, h / 2f)
+        trailPaint.shader = SweepGradient(w / 2f, h / 2f, trailColors, trailPositions)
+        canvas.restore()
+
+        canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, trailPaint)
     }
 }

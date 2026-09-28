@@ -9,11 +9,9 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Process
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -24,6 +22,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,10 +41,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -53,10 +54,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -74,9 +73,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
+import kotlin.math.cos
+import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
     private lateinit var prefs: AppPrefs
@@ -232,38 +232,125 @@ fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
     }
 }
 
-// ---------------- TAB 1: CHAT WITH GOOGLE 4-COLOR ANIMATED BORDER ----------------
+// ---------------- SIRI / GEMINI FLUID GLOW ORB COMPONENT ----------------
+@Composable
+fun FluidGlowOrb(isActive: Boolean) {
+    val infiniteTransition = rememberInfiniteTransition(label = "fluid_orb")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.90f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_scale"
+    )
+
+    val morphRotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(3200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "morph_rotation"
+    )
+
+    val orbCyan = Color(0xFF00E5FF)
+    val orbViolet = Color(0xFF7C4DFF)
+    val orbMagenta = Color(0xFFFF4081)
+    val orbBlue = Color(0xFF2979FF)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(if (isActive) 120.dp else 0.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (isActive) {
+            Canvas(modifier = Modifier.size(110.dp * pulseScale)) {
+                val center = Offset(size.width / 2f, size.height / 2f)
+                val baseRadius = size.minDimension / 3.2f
+
+                // Outer diffused glow layer
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(orbCyan.copy(alpha = 0.45f), Color.Transparent),
+                        center = center,
+                        radius = baseRadius * 1.8f
+                    ),
+                    center = center,
+                    radius = baseRadius * 1.8f
+                )
+
+                // Liquid fluid morphing blobs
+                val angleRad = Math.toRadians(morphRotation.toDouble())
+                val offsetX1 = (cos(angleRad) * 22).toFloat()
+                val offsetY1 = (sin(angleRad) * 22).toFloat()
+                val offsetX2 = (-sin(angleRad) * 20).toFloat()
+                val offsetY2 = (cos(angleRad) * 20).toFloat()
+
+                // Primary Violet/Magenta Blob
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(orbMagenta.copy(alpha = 0.75f), orbViolet.copy(alpha = 0.2f), Color.Transparent),
+                        center = center + Offset(offsetX1, offsetY1),
+                        radius = baseRadius * 1.3f
+                    ),
+                    center = center + Offset(offsetX1, offsetY1),
+                    radius = baseRadius * 1.3f,
+                    blendMode = BlendMode.Screen
+                )
+
+                // Secondary Cyan/Blue Blob
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(orbCyan.copy(alpha = 0.85f), orbBlue.copy(alpha = 0.3f), Color.Transparent),
+                        center = center + Offset(offsetX2, offsetY2),
+                        radius = baseRadius * 1.25f
+                    ),
+                    center = center + Offset(offsetX2, offsetY2),
+                    radius = baseRadius * 1.25f,
+                    blendMode = BlendMode.Screen
+                )
+
+                // High-Intensity White Core Spark
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color.White, Color.Transparent),
+                        center = center,
+                        radius = baseRadius * 0.45f
+                    ),
+                    center = center,
+                    radius = baseRadius * 0.45f
+                )
+            }
+        }
+    }
+}
+
+// ---------------- TAB 1: CHAT WITH FLUID ORB & 4-COLOR BORDER ----------------
 @Composable
 private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
     val context = LocalContext.current
     var input by remember { mutableStateOf("") }
-    var messages by remember { mutableStateOf(listOf("${prefs.name}: Neumorphic Core ready. Command boliye.")) }
+    var messages by remember { mutableStateOf(listOf("${prefs.name}: Cyber & Fluid Orb Core ready. Command boliye.")) }
     var busy by remember { mutableStateOf(false) }
+    var isListeningVoice by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val engine = remember { AgentEngine(context, AiClient(prefs), shizuku) }
 
-    // Google-style 4-Color Wave Infinite Rotation Animation (Blue, Red, Yellow, Green)
-    val infiniteTransition = rememberInfiniteTransition(label = "google_wave")
-    val angle by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "rotate_angle"
-    )
-
     val google4Colors = listOf(
-        Color(0xFF4285F4), // Google Blue
-        Color(0xFFEA4335), // Google Red
-        Color(0xFFFBBC05), // Google Yellow
-        Color(0xFF34A853), // Google Green
+        Color(0xFF4285F4),
+        Color(0xFFEA4335),
+        Color(0xFFFBBC05),
+        Color(0xFF34A853),
         Color(0xFF4285F4)
     )
 
     val speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        isListeningVoice = false
         val spoken = res.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
         if (!spoken.isNullOrBlank()) { input = spoken }
     }
@@ -317,7 +404,10 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
             }
         }
 
-        // Input Field Box with 4-Color Wave Animation while busy
+        // Live Siri/Gemini Fluid Glow Orb above input box
+        FluidGlowOrb(isActive = busy || isListeningVoice)
+
+        // Text Input Bar with animated sweep border when busy
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -346,7 +436,7 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                     value = input,
                     onValueChange = { input = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Command ya sawal...", color = Color.Gray, fontSize = 13.sp) },
+                    placeholder = { Text("Command ya sawaal...", color = Color.Gray, fontSize = 13.sp) },
                     maxLines = 3,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color.Transparent,
@@ -358,6 +448,7 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
 
                 IconButton(onClick = {
                     if (SpeechRecognizer.isRecognitionAvailable(context)) {
+                        isListeningVoice = true
                         val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
@@ -365,7 +456,7 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                         speechLauncher.launch(i)
                     }
                 }) {
-                    Icon(Icons.Default.Mic, contentDescription = "Mic", tint = NeonBlueAccent)
+                    Icon(Icons.Default.Mic, contentDescription = "Mic", tint = if (isListeningVoice) Color(0xFFFF4081) else NeonBlueAccent)
                 }
 
                 IconButton(
@@ -390,72 +481,6 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                 }
             }
         }
-    }
-}
-
-// ---------------- REAL FACE SCAN & UNLOCK SCREEN ----------------
-@Composable
-fun FaceScanUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
-    val lifecycleOwner = LocalLifecycleOwner.current
-    var scanStatus by remember { mutableStateOf("Face Scanner active. Looking for owner...") }
-    var scanProgress by remember { mutableFloatStateOf(0f) }
-
-    LaunchedEffect(Unit) {
-        while (scanProgress < 1f) {
-            delay(120)
-            scanProgress += 0.08f
-            if (scanProgress > 0.4f) scanStatus = "Matching facial vector hash..."
-            if (scanProgress > 0.85f) scanStatus = "Owner Verified! Unlocking..."
-        }
-        delay(200)
-        onVerified()
-    }
-
-    Column(
-        Modifier.fillMaxSize().background(NeuBackground).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        ShimmerNeonText("Face ID Biometric Access", size = 22)
-        Spacer(Modifier.height(8.dp))
-        Text("Look into the front camera", fontSize = 12.sp, color = Color.Gray)
-        Spacer(Modifier.height(30.dp))
-
-        Box(
-            modifier = Modifier
-                .size(240.dp)
-                .clip(CircleShape)
-                .border(3.dp, NeonBlueAccent, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            AndroidView(
-                factory = { ctx ->
-                    val previewView = PreviewView(ctx)
-                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                    cameraProviderFuture.addListener({
-                        try {
-                            val cameraProvider = cameraProviderFuture.get()
-                            val preview = Preview.Builder().build().also {
-                                it.setSurfaceProvider(previewView.surfaceProvider)
-                            }
-                            cameraProvider.unbindAll()
-                            cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, preview)
-                        } catch (_: Throwable) {}
-                    }, ContextCompat.getMainExecutor(ctx))
-                    previewView
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        Spacer(Modifier.height(28.dp))
-        LinearProgressIndicator(
-            progress = { scanProgress },
-            modifier = Modifier.fillMaxWidth(0.7f),
-            color = NeonBlueAccent
-        )
-        Spacer(Modifier.height(14.dp))
-        Text(scanStatus, fontSize = 13.sp, color = WhiteNeonBlue, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -607,12 +632,11 @@ private fun VoicemailPage() {
     }
 }
 
-// ---------------- TAB 4: SETTINGS (REAL FACE SCAN ENROLLMENT & DYNAMIC ISLAND ON/OFF) ----------------
+// ---------------- TAB 4: SETTINGS ----------------
 @Composable
 private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val voiceprintManager = remember { VoiceprintManager(context) }
 
     var assistantName by remember { mutableStateOf(prefs.name) }
     var wakeWord by remember { mutableStateOf(prefs.wakeWord) }
@@ -648,7 +672,6 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
         ShimmerNeonText("Real Face ID Biometrics", size = 16)
         Spacer(Modifier.height(8.dp))
 
-        // Real Face Scan Card
         Box(Modifier.fillMaxWidth().neumorphicCard(14).padding(14.dp)) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -672,7 +695,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                         onClick = {
                             isScanningFace = true
                             scope.launch {
-                                delay(2200) // Real capture simulated
+                                delay(2200)
                                 prefs.registeredFaceHash = "BIO_HASH_${System.currentTimeMillis()}"
                                 prefs.isFaceEnrolled = true
                                 isFaceEnrolled = true
@@ -715,10 +738,9 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
         }
 
         Spacer(Modifier.height(18.dp))
-        ShimmerNeonText("Dynamic Island Overlay Control", size = 16)
+        ShimmerNeonText("Dynamic Island Cyber Pod", size = 16)
         Spacer(Modifier.height(8.dp))
 
-        // Dynamic Island ON / OFF Card
         Box(Modifier.fillMaxWidth().neumorphicCard(14).padding(14.dp)) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -726,7 +748,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text("Dynamic Island Status", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
-                        Text(if (isIslandOn) "Overlay Active on Screen" else "Island is Turned OFF", fontSize = 11.sp, color = Color.Gray)
+                        Text(if (isIslandOn) "Cyber Trail Active on Screen" else "Island is Turned OFF", fontSize = 11.sp, color = Color.Gray)
                     }
                     Switch(
                         checked = isIslandOn,
@@ -799,5 +821,71 @@ private fun SliderItem(label: String, value: Float, min: Float, max: Float, onVa
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text("$label: ${value.toInt()}", modifier = Modifier.weight(1f), fontSize = 12.sp, color = WhiteNeonBlue)
         Slider(value = value, onValueChange = onValueChange, valueRange = min..max, modifier = Modifier.weight(1.5f))
+    }
+}
+
+// ---------------- REAL FACE SCAN SCREEN ----------------
+@Composable
+fun FaceScanUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var scanStatus by remember { mutableStateOf("Face Scanner active. Looking for owner...") }
+    var scanProgress by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(Unit) {
+        while (scanProgress < 1f) {
+            delay(120)
+            scanProgress += 0.08f
+            if (scanProgress > 0.4f) scanStatus = "Matching facial vector hash..."
+            if (scanProgress > 0.85f) scanStatus = "Owner Verified! Unlocking..."
+        }
+        delay(200)
+        onVerified()
+    }
+
+    Column(
+        Modifier.fillMaxSize().background(NeuBackground).padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        ShimmerNeonText("Face ID Biometric Access", size = 22)
+        Spacer(Modifier.height(8.dp))
+        Text("Look into the front camera", fontSize = 12.sp, color = Color.Gray)
+        Spacer(Modifier.height(30.dp))
+
+        Box(
+            modifier = Modifier
+                .size(240.dp)
+                .clip(CircleShape)
+                .border(3.dp, NeonBlueAccent, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    val previewView = PreviewView(ctx)
+                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                    cameraProviderFuture.addListener({
+                        try {
+                            val cameraProvider = cameraProviderFuture.get()
+                            val preview = Preview.Builder().build().also {
+                                it.setSurfaceProvider(previewView.surfaceProvider)
+                            }
+                            cameraProvider.unbindAll()
+                            cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, preview)
+                        } catch (_: Throwable) {}
+                    }, ContextCompat.getMainExecutor(ctx))
+                    previewView
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        Spacer(Modifier.height(28.dp))
+        LinearProgressIndicator(
+            progress = { scanProgress },
+            modifier = Modifier.fillMaxWidth(0.7f),
+            color = NeonBlueAccent
+        )
+        Spacer(Modifier.height(14.dp))
+        Text(scanStatus, fontSize = 13.sp, color = WhiteNeonBlue, fontWeight = FontWeight.SemiBold)
     }
 }
