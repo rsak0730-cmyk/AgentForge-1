@@ -4,8 +4,10 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import com.agentforge.app.automation.ShizukuBridge
+import com.agentforge.app.data.AppPrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.net.URLEncoder
 
 class AgentEngine(
@@ -13,84 +15,139 @@ class AgentEngine(
     private val aiClient: AiClient,
     private val shizuku: ShizukuBridge
 ) {
+    private val prefs = AppPrefs(context)
+    private val chatHistory = mutableListOf<Pair<String, String>>() // Memory buffer (User, Assistant)
 
     suspend fun execute(userInput: String): String = withContext(Dispatchers.IO) {
-        val lower = userInput.lowercase().trim()
+        val trimmedInput = userInput.trim()
 
-        // 1. Direct Local Fast-Path (Instant without waiting for API)
-        if (lower.contains("youtube") && (lower.contains("search") || lower.contains("play") || lower.contains("chalao") || lower.contains("gaana"))) {
-            val query = extractQuery(userInput, listOf("search", "play", "chalao", "sunao", "for", "on youtube", "youtube"))
-            if (query.isNotBlank()) {
-                val success = openYouTubeSearch(query)
-                return@withContext if (success) "YouTube par '$query' play kar diya." else "YouTube open nahi ho paya."
-            }
+        // 1. Long-Term Memory (Permanent facts storage)
+        val storedMemories = prefs.agentMemories // Key-value JSON string of remembered facts
+        val historyContext = chatHistory.takeLast(6).joinToString("\n") { 
+            "User: ${it.first}\nAssistant: ${it.second}" 
         }
 
-        if (lower.startsWith("open ") || lower.startsWith("kholo ")) {
-            val appTarget = lower.replace("open ", "").replace("kholo ", "").trim()
-            val launched = launchAppByName(appTarget)
-            if (launched) return@withContext "$appTarget open kar diya."
-        }
-
-        // 2. Fallback to Gemini Brain with Strict Action Prompting
+        // 2. Strict Brain Prompt with Memory Injection
         val systemPrompt = """
-            You are Mira, an OS companion on Android.
-            When the user wants to perform an action, you MUST respond in this format:
-            ACTION: <COMMAND_TYPE> | <PARAMETERS> | <NATURAL_RESPONSE>
+            Aap Mira ho, Manish ke personal Android OS companion aur Jarvis-style agent.
             
-            Supported Actions:
-            - YOUTUBE: <query> | <Hindi natural response>
-            - LAUNCH: <app_name> | <Hindi natural response>
-            - SHELL: <adb_command> | <Hindi natural response>
-            - CHAT: none | <Hindi natural response>
+            Permanently Remembered Facts about Manish:
+            $storedMemories
             
-            Example:
-            User: open youtube and search Hindi song
-            Response: ACTION: YOUTUBE | Hindi song | YouTube par Hindi song search kar diya hai.
+            Recent Conversation History:
+            $historyContext
+            
+            Current User Input: "$trimmedInput"
+            
+            RULES FOR OUTPUT:
+            Hamesha sirf valid JSON object me reply do:
+            {
+              "thought": "Short explanation of intent",
+              "action": "YOUTUBE | LAUNCH | REMEMBER | SHELL | CHAT",
+              "param": "Target parameter ya search query (agar user 'mera fav gaana' bole toh stored memories ya context se resolve karke actual song name likho)",
+              "remember_key": "Fact key agar user kuch yaad rakhne bole (warna empty)",
+              "remember_value": "Fact value agar user kuch yaad rakhne bole (warna empty)",
+              "reply": "Natural Hinglish reply Manish ke liye"
+            }
+            
+            Examples:
+            1. User: mera fav gaana "Arz kya hai" ab ise yaad rakhna
+               Output: {"thought":"Storing favorite song","action":"REMEMBER","param":"Arz kya hai","remember_key":"fav_song","remember_value":"Arz kya hai","reply":"Theek hai Manish, maine yaad rakh liya ki aapka favourite gaana 'Arz kya hai' hai."}
+            2. User: mera fav gaana lagao youtube pe
+               Output: {"thought":"Playing favorite song from memory","action":"YOUTUBE","param":"Arz kya hai","remember_key":"","remember_value":"","reply":"Aapka favourite gaana 'Arz kya hai' YouTube par play kar rahi hoon."}
         """.trimIndent()
 
-        val aiResponse = aiClient.ask("$systemPrompt\n\nUser: $userInput")
+        val aiRawResponse = try {
+            aiClient.ask(systemPrompt)
+        } catch (e: Exception) {
+            return@withContext "Internet ya API connection me problem aayi: ${e.message}"
+        }
 
-        if (aiResponse.startsWith("ACTION:")) {
-            parseAndExecuteAction(aiResponse)
-        } else {
-            aiResponse
+        val parsed = parseJsonResponse(aiRawResponse)
+        
+        // Handle Permanent Fact Storage
+        if (parsed.rememberKey.isNotBlank() && parsed.rememberValue.isNotBlank()) {
+            saveMemory(parsed.rememberKey, parsed.rememberValue)
+        }
+
+        // Execute OS Actions
+        val executionResult = when (parsed.action) {
+            "YOUTUBE" -> {
+                val query = if (parsed.param.isNotBlank()) parsed.param else getMemory("fav_song") ?: "Hindi song"
+                val ok = openYouTubeSearch(query)
+                if (ok) parsed.reply else "YouTube open nahi ho paya."
+            }
+            "LAUNCH" -> {
+                val ok = launchAppByName(parsed.param)
+                if (ok) parsed.reply else "${parsed.param} app nahi mila."
+            }
+            "SHELL" -> {
+                if (shizuku.hasPermission()) {
+                    shizuku.executeCommand(parsed.param)
+                    parsed.reply
+                } else {
+                    "${parsed.reply} (Lekin Shizuku offline hai)"
+                }
+            }
+            else -> parsed.reply
+        }
+
+        // Save to active short-term session memory
+        chatHistory.add(trimmedInput to executionResult)
+        if (chatHistory.size > 12) chatHistory.removeAt(0)
+
+        executionResult
+    }
+
+    private data class ParsedAction(
+        val action: String,
+        val param: String,
+        val rememberKey: String,
+        val rememberValue: String,
+        val reply: String
+    )
+
+    private fun parseJsonResponse(raw: String): ParsedAction {
+        return try {
+            val jsonStart = raw.indexOf("{")
+            val jsonEnd = raw.lastIndexOf("}")
+            if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart) {
+                val jsonStr = raw.substring(jsonStart, jsonEnd + 1)
+                val obj = JSONObject(jsonStr)
+                ParsedAction(
+                    action = obj.optString("action", "CHAT").uppercase(),
+                    param = obj.optString("param", ""),
+                    rememberKey = obj.optString("remember_key", ""),
+                    rememberValue = obj.optString("remember_value", ""),
+                    reply = obj.optString("reply", "Done")
+                )
+            } else {
+                ParsedAction("CHAT", "", "", "", raw)
+            }
+        } catch (_: Exception) {
+            ParsedAction("CHAT", "", "", "", raw)
         }
     }
 
-    private fun parseAndExecuteAction(response: String): String {
-        return try {
-            val clean = response.removePrefix("ACTION:").trim()
-            val parts = clean.split("|").map { it.trim() }
-            val actionType = parts.getOrNull(0)?.uppercase() ?: "CHAT"
-            val param = parts.getOrNull(1) ?: ""
-            val naturalReply = parts.getOrNull(2) ?: "Done"
+    private fun saveMemory(key: String, value: String) {
+        try {
+            val current = JSONObject(prefs.agentMemories.ifBlank { "{}" })
+            current.put(key, value)
+            prefs.agentMemories = current.toString()
+        } catch (_: Exception) {}
+    }
 
-            when (actionType) {
-                "YOUTUBE" -> {
-                    openYouTubeSearch(param)
-                    naturalReply
-                }
-                "LAUNCH" -> {
-                    launchAppByName(param)
-                    naturalReply
-                }
-                "SHELL" -> {
-                    if (shizuku.hasPermission()) {
-                        shizuku.executeCommand(param)
-                    }
-                    naturalReply
-                }
-                else -> naturalReply
-            }
+    private fun getMemory(key: String): String? {
+        return try {
+            val current = JSONObject(prefs.agentMemories.ifBlank { "{}" })
+            if (current.has(key)) current.getString(key) else null
         } catch (_: Exception) {
-            response
+            null
         }
     }
 
     private fun openYouTubeSearch(query: String): Boolean {
         return try {
-            // Intent 1: Direct YouTube App Search Activity
             val intent = Intent(Intent.ACTION_SEARCH).apply {
                 setPackage("com.google.android.youtube")
                 putExtra("query", query)
@@ -100,7 +157,6 @@ class AgentEngine(
             true
         } catch (_: Exception) {
             try {
-                // Fallback Intent 2: Universal Web/App Deep Link
                 val encoded = URLEncoder.encode(query, "UTF-8")
                 val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$encoded")).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -117,8 +173,8 @@ class AgentEngine(
         val pm = context.packageManager
         val packages = pm.getInstalledApplications(0)
         val target = packages.firstOrNull {
-            val appLabel = pm.getApplicationLabel(it).toString().lowercase()
-            appLabel.contains(name.lowercase()) || it.packageName.lowercase().contains(name.lowercase())
+            val label = pm.getApplicationLabel(it).toString().lowercase()
+            label.contains(name.lowercase()) || it.packageName.lowercase().contains(name.lowercase())
         }
 
         return if (target != null) {
@@ -129,13 +185,5 @@ class AgentEngine(
                 true
             } else false
         } else false
-    }
-
-    private fun extractQuery(text: String, stopWords: List<String>): String {
-        var clean = text
-        for (w in stopWords) {
-            clean = clean.replace(Regex("(?i)\\b$w\\b"), "")
-        }
-        return clean.replace(Regex("(?i)and"), "").trim()
     }
 }

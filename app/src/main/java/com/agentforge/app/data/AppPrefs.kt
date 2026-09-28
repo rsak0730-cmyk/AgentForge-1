@@ -1,41 +1,113 @@
 package com.agentforge.app.data
 
 import android.content.Context
-import com.agentforge.app.security.SecurityVault
+import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 
 class AppPrefs(context: Context) {
-    private val p = context.getSharedPreferences("agentforge_vault", Context.MODE_PRIVATE)
-    private val vault = SecurityVault(context)
 
-    var provider: String get() = p.getString("provider", "gemini") ?: "gemini"; set(v) = p.edit().putString("provider", v).apply()
-    var name: String get() = p.getString("name", "Mira") ?: "Mira"; set(v) = p.edit().putString("name", v).apply()
-    var wakeWord: String get() = p.getString("wake_word", "hey mira") ?: "hey mira"; set(v) = p.edit().putString("wake_word", v).apply()
-    var isSleeping: Boolean get() = p.getBoolean("is_sleeping", false); set(v) = p.edit().putBoolean("is_sleeping", v).apply()
+    private val masterKey = MasterKey.Builder(context)
+        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+        .build()
 
-    // Real Face Biometric Store
-    var isFaceLockEnabled: Boolean get() = p.getBoolean("face_lock_enabled", false); set(v) = p.edit().putBoolean("face_lock_enabled", v).apply()
-    var isFaceEnrolled: Boolean get() = p.getBoolean("face_enrolled", false); set(v) = p.edit().putBoolean("face_enrolled", v).apply()
-    var registeredFaceHash: String get() = p.getString("face_hash_data", "") ?: ""; set(v) = p.edit().putString("face_hash_data", v).apply()
+    // Encrypted Hardware Storage for sensitive credentials
+    private val securePrefs: SharedPreferences = EncryptedSharedPreferences.create(
+        context,
+        "agentforge_secure_prefs",
+        masterKey,
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+    )
 
-    // Dynamic Island State
-    var isIslandEnabled: Boolean get() = p.getBoolean("island_enabled", false); set(v) = p.edit().putBoolean("island_enabled", v).apply()
-    var islandX: Float get() = p.getFloat("ix", 0f); set(v) = p.edit().putFloat("ix", v).apply()
-    var islandY: Float get() = p.getFloat("iy", 20f); set(v) = p.edit().putFloat("iy", v).apply()
-    var islandWidth: Float get() = p.getFloat("iw", 180f); set(v) = p.edit().putFloat("iw", v).apply()
-    var islandHeight: Float get() = p.getFloat("ih", 42f); set(v) = p.edit().putFloat("ih", v).apply()
-    var islandRadius: Float get() = p.getFloat("ir", 24f); set(v) = p.edit().putFloat("ir", v).apply()
+    // Standard SharedPreferences for app layout, toggles & states
+    private val prefs: SharedPreferences =
+        context.getSharedPreferences("agentforge_prefs", Context.MODE_PRIVATE)
 
-    // Voiceprint Biometrics
-    var isVoiceprintEnrolled: Boolean get() = p.getBoolean("voiceprint_enrolled", false); set(v) = p.edit().putBoolean("voiceprint_enrolled", v).apply()
-    var enrolledVoiceprint: String
-        get() = vault.decrypt(p.getString("vault_voiceprint", "") ?: "")
-        set(v) = p.edit().putString("vault_voiceprint", vault.encrypt(v)).apply()
+    // ---------------- PERMANENT LONG-TERM MEMORY (JSON) ----------------
+    var agentMemories: String
+        get() = prefs.getString("agent_memories", "{}") ?: "{}"
+        set(v) = prefs.edit().putString("agent_memories", v).apply()
 
-    // Encrypted API Keys
+    // ---------------- ASSISTANT IDENTITY & VOICE ----------------
+    var name: String
+        get() = prefs.getString("assistant_name", "Mira") ?: "Mira"
+        set(v) = prefs.edit().putString("assistant_name", v).apply()
+
+    var wakeWord: String
+        get() = prefs.getString("wake_word", "hey mira") ?: "hey mira"
+        set(v) = prefs.edit().putString("wake_word", v).apply()
+
+    var isSleeping: Boolean
+        get() = prefs.getBoolean("is_sleeping", false)
+        set(v) = prefs.edit().putBoolean("is_sleeping", v).apply()
+
+    // ---------------- AI API VAULT (ENCRYPTED) ----------------
+    var provider: String
+        get() = prefs.getString("ai_provider", "gemini") ?: "gemini"
+        set(v) = prefs.edit().putString("ai_provider", v).apply()
+
     var key: String
-        get() = vault.decrypt(p.getString("vault_api_key", "") ?: "")
-        set(v) = p.edit().putString("vault_api_key", vault.encrypt(v)).apply()
+        get() = securePrefs.getString("ai_key", "") ?: ""
+        set(v) = securePrefs.edit().putString("ai_key", v).apply()
 
-    var model: String get() = p.getString("model", "gemini-2.5-flash") ?: "gemini-2.5-flash"; set(v) = p.edit().putString("model", v).apply()
-    var baseUrl: String get() = p.getString("base", "https://generativelanguage.googleapis.com") ?: "https://generativelanguage.googleapis.com"; set(v) = p.edit().putString("base", v).apply()
+    var model: String
+        get() = prefs.getString("ai_model", "gemini-2.5-flash") ?: "gemini-2.5-flash"
+        set(v) = prefs.edit().putString("ai_model", v).apply()
+
+    var baseUrl: String
+        get() = prefs.getString("ai_base_url", "https://generativelanguage.googleapis.com") ?: "https://generativelanguage.googleapis.com"
+        set(v) = prefs.edit().putString("ai_base_url", v).apply()
+
+    // ---------------- BIOMETRIC FACE MESH LOCK ----------------
+    var isFaceLockEnabled: Boolean
+        get() = prefs.getBoolean("face_lock_enabled", false)
+        set(v) = prefs.edit().putBoolean("face_lock_enabled", v).apply()
+
+    var isFaceEnrolled: Boolean
+        get() = prefs.getBoolean("face_enrolled", false)
+        set(v) = prefs.edit().putBoolean("face_enrolled", v).apply()
+
+    var registeredFaceHash: String
+        get() = securePrefs.getString("registered_face_hash", "") ?: ""
+        set(v) = securePrefs.edit().putString("registered_face_hash", v).apply()
+
+    // ---------------- VOICEPRINT ACOUSTIC BIOMETRICS ----------------
+    var isVoiceprintEnrolled: Boolean
+        get() = prefs.getBoolean("voiceprint_enrolled", false)
+        set(v) = prefs.edit().putBoolean("voiceprint_enrolled", v).apply()
+
+    var registeredVoiceprint: String
+        get() = securePrefs.getString("registered_voiceprint", "") ?: ""
+        set(v) = securePrefs.edit().putString("registered_voiceprint", v).apply()
+
+    // ---------------- DYNAMIC ISLAND GEOMETRY & TOGGLES ----------------
+    var isIslandEnabled: Boolean
+        get() = prefs.getBoolean("island_enabled", true)
+        set(v) = prefs.edit().putBoolean("island_enabled", v).apply()
+
+    var islandX: Float
+        get() = prefs.getFloat("island_x", 0f)
+        set(v) = prefs.edit().putFloat("island_x", v).apply()
+
+    var islandY: Float
+        get() = prefs.getFloat("island_y", 20f)
+        set(v) = prefs.edit().putFloat("island_y", v).apply()
+
+    var islandWidth: Float
+        get() = prefs.getFloat("island_width", 260f)
+        set(v) = prefs.edit().putFloat("island_width", v).apply()
+
+    var islandHeight: Float
+        get() = prefs.getFloat("island_height", 42f)
+        set(v) = prefs.edit().putFloat("island_height", v).apply()
+
+    // ---------------- SYSTEM LEVEL FLAGS ----------------
+    var isAccessibilityEnabled: Boolean
+        get() = prefs.getBoolean("accessibility_enabled", false)
+        set(v) = prefs.edit().putBoolean("accessibility_enabled", v).apply()
+
+    var isShizukuPermitted: Boolean
+        get() = prefs.getBoolean("shizuku_permitted", false)
+        set(v) = prefs.edit().putBoolean("shizuku_permitted", v).apply()
 }
