@@ -71,7 +71,6 @@ import com.agentforge.app.service.VoiceListenerService
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.google.mlkit.vision.face.FaceLandmark
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -813,6 +812,7 @@ private fun SliderItem(label: String, value: Float, min: Float, max: Float, onVa
     }
 }
 
+// ---------------- REAL FACE ENROLLMENT DIALOG ----------------
 @Composable
 fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -822,7 +822,7 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
     val detectorOptions = remember {
         FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setLandmarkMode(FaceLandmark.LANDMARK_MODE_ALL)
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .build()
     }
     val detector = remember { FaceDetection.getClient(detectorOptions) }
@@ -909,6 +909,7 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
     )
 }
 
+// ---------------- REAL FACE UNLOCK SCREEN (ML KIT DRIVEN) ----------------
 @Composable
 fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -918,7 +919,7 @@ fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     val detectorOptions = remember {
         FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setLandmarkMode(FaceLandmark.LANDMARK_MODE_ALL)
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .build()
     }
     val detector = remember { FaceDetection.getClient(detectorOptions) }
