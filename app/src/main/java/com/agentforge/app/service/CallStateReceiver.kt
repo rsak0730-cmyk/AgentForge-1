@@ -3,76 +3,57 @@ package com.agentforge.app.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.ContactsContract
 import android.telephony.TelephonyManager
 
 class CallStateReceiver : BroadcastReceiver() {
-    companion object {
-        var lastState = TelephonyManager.CALL_STATE_IDLE
-        var incomingNumber: String? = null
-        var isIncoming = false
-    }
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == "android.intent.action.PHONE_STATE") {
-            val stateStr = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
-            val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
-            if (!number.isNullOrBlank()) {
-                incomingNumber = number
-            }
+        if (intent.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
 
-            var state = TelephonyManager.CALL_STATE_IDLE
-            if (stateStr == TelephonyManager.EXTRA_STATE_RINGING) {
-                state = TelephonyManager.CALL_STATE_RINGING
-            } else if (stateStr == TelephonyManager.EXTRA_STATE_OFFHOOK) {
-                state = TelephonyManager.CALL_STATE_OFFHOOK
-            }
+        val stateStr = intent.getStringExtra(TelephonyManager.EXTRA_STATE) ?: return
+        val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER) ?: "Unknown"
+        val callerName = resolveContactName(context, incomingNumber)
 
-            onCallStateChanged(context, state, incomingNumber ?: "Unknown Caller")
-        }
-    }
+        when (stateStr) {
+            TelephonyManager.EXTRA_STATE_RINGING -> {
+                AgentAccessibilityService.instance?.showIsland("Incoming: $callerName")
 
-    private fun onCallStateChanged(context: Context, state: Int, number: String) {
-        if (lastState == state) return
-
-        when (state) {
-            TelephonyManager.CALL_STATE_RINGING -> {
-                isIncoming = true
-                incomingNumber = number
-            }
-            TelephonyManager.CALL_STATE_OFFHOOK -> {
-                if (isIncoming) {
-                    // Call uthayi gayi ya voicemail recording mode activate hua
-                    startVoicemailRecording(context, number)
+                // Start Intelligent Multilingual Butler Screening Service
+                val butlerIntent = Intent(context, CallButlerService::class.java).apply {
+                    putExtra("CALLER_NAME", callerName)
+                    putExtra("CALLER_NUMBER", incomingNumber)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(butlerIntent)
+                } else {
+                    context.startService(butlerIntent)
                 }
             }
-            TelephonyManager.CALL_STATE_IDLE -> {
-                if (isIncoming) {
-                    // Call khatam ho gayi - recording stop karo
-                    stopVoicemailRecording(context)
-                    isIncoming = false
-                }
+            TelephonyManager.EXTRA_STATE_IDLE -> {
+                context.stopService(Intent(context, CallButlerService::class.java))
+                context.stopService(Intent(context, CallVoicemailService::class.java))
+                AgentAccessibilityService.instance?.showIsland("Mira: Ready")
             }
         }
-        lastState = state
     }
 
-    private fun startVoicemailRecording(context: Context, callerNumber: String) {
-        val intent = Intent(context, CallVoicemailService::class.java).apply {
-            action = "START_RECORDING"
-            putExtra("CALLER_NUMBER", callerNumber)
+    private fun resolveContactName(context: Context, number: String): String {
+        if (number == "Unknown") return "Unknown Caller"
+        return try {
+            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
+            val cursor = context.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)
+            var name = number
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    name = it.getString(0)
+                }
+            }
+            name
+        } catch (_: Exception) {
+            number
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
-        }
-    }
-
-    private fun stopVoicemailRecording(context: Context) {
-        val intent = Intent(context, CallVoicemailService::class.java).apply {
-            action = "STOP_RECORDING"
-        }
-        context.startService(intent)
     }
 }
