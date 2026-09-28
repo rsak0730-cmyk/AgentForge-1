@@ -15,6 +15,7 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.SweepGradient
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -154,7 +155,7 @@ class AgentAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    // ---------------- DYNAMIC ISLAND WITH HOLOGRAPHIC CYBER TRAIL ----------------
+    // ---------------- DYNAMIC ISLAND ENGINE ----------------
 
     fun updateIslandGeometry() {
         Handler(Looper.getMainLooper()).post {
@@ -213,7 +214,6 @@ class AgentAccessibilityService : AccessibilityService() {
                         }
                     }
 
-                    // Cyber holographic animated border
                     borderTrailView = IslandBorderTrailView(this).apply {
                         setCornerRadius(prefs.islandRadius)
                     }
@@ -226,7 +226,7 @@ class AgentAccessibilityService : AccessibilityService() {
                     }
 
                     visualizerBarView = TextView(this).apply {
-                        setTextColor(Color(0xFF00E5FF))
+                        setTextColor(0xFF00E5FF.toInt())
                         textSize = 10f
                         visibility = View.GONE
                         setPadding(0, 0, 8, 0)
@@ -392,9 +392,8 @@ class AgentAccessibilityService : AccessibilityService() {
         }
         val root = rootInActiveWindow ?: return false
         val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
-        val bundle = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToType)
-        }
+        val bundle = Bundle()
+        bundle.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToType)
         return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
     }
 }
@@ -455,10 +454,8 @@ class IslandBorderTrailView(context: Context) : View(context) {
 
         val rectF = RectF(strokeWidthPx / 2f, strokeWidthPx / 2f, w - strokeWidthPx / 2f, h - strokeWidthPx / 2f)
 
-        // Draw solid dark glass core
         canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, bgPaint)
 
-        // Rotate holographic gradient trail
         canvas.save()
         canvas.rotate(rotateAngle, w / 2f, h / 2f)
         trailPaint.shader = SweepGradient(w / 2f, h / 2f, trailColors, trailPositions)
