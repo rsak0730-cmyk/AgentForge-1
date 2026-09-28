@@ -655,7 +655,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
         )
 
         Spacer(Modifier.height(18.dp))
-        ShimmerNeonText("Real Face ID Biometrics (ML Kit)", size = 16)
+        ShimmerNeonText("High-Precision Biometric Face Lock", size = 16)
         Spacer(Modifier.height(8.dp))
 
         Box(Modifier.fillMaxWidth().neumorphicCard(14).padding(14.dp)) {
@@ -664,9 +664,9 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                     Icon(Icons.Default.Face, contentDescription = null, tint = NeonBlueAccent)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("Facial Geometric Hash", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
+                        Text("133-Point Facial Mesh & Contours", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
                         Text(
-                            text = if (isFaceEnrolled) "Face Vector Enrolled • Biometrics Active" else "No Face Enrolled • Real camera calibration required",
+                            text = if (isFaceEnrolled) "Strict Owner Biometrics Enrolled" else "Not calibrated • Requires frontal face scan",
                             fontSize = 11.sp,
                             color = if (isFaceEnrolled) Color(0xFF00FF7F) else Color.Gray
                         )
@@ -680,7 +680,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                         modifier = Modifier.weight(1f),
                         onClick = { showEnrollDialog = true }
                     ) {
-                        Text(if (isFaceEnrolled) "Re-Enroll Real Face" else "Enroll Real Face")
+                        Text(if (isFaceEnrolled) "Re-Enroll Biometrics" else "Enroll Owner Face")
                     }
 
                     if (isFaceEnrolled) {
@@ -700,7 +700,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                 Spacer(Modifier.height(12.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Enable Real Face ID App Lock", modifier = Modifier.weight(1f), color = WhiteNeonBlue, fontSize = 13.sp)
+                    Text("Enable Strict Face Unlock", modifier = Modifier.weight(1f), color = WhiteNeonBlue, fontSize = 13.sp)
                     Switch(
                         checked = faceLock && isFaceEnrolled,
                         enabled = isFaceEnrolled,
@@ -812,17 +812,17 @@ private fun SliderItem(label: String, value: Float, min: Float, max: Float, onVa
     }
 }
 
-// ---------------- REAL FACE ENROLLMENT DIALOG ----------------
+// ---------------- 133-POINT MESH ENROLLMENT DIALOG ----------------
 @Composable
 fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    var statusText by remember { mutableStateOf("Position your face directly inside the circle") }
+    var statusText by remember { mutableStateOf("Look straight at the camera (Hold still)") }
     var isCalibrated by remember { mutableStateOf(false) }
 
     val detectorOptions = remember {
         FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+            .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
             .build()
     }
     val detector = remember { FaceDetection.getClient(detectorOptions) }
@@ -831,12 +831,12 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = NeuBackground,
-        title = { ShimmerNeonText("Calibrate Real Biometrics", size = 18) },
+        title = { ShimmerNeonText("Enroll Owner Biometric Mesh", size = 18) },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(
                     modifier = Modifier
-                        .size(200.dp)
+                        .size(210.dp)
                         .clip(CircleShape)
                         .border(3.dp, if (isCalibrated) Color(0xFF00FF7F) else NeonBlueAccent, CircleShape)
                 ) {
@@ -862,15 +862,19 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
                                             .addOnSuccessListener { faces ->
                                                 if (faces.isNotEmpty()) {
                                                     val face = faces[0]
-                                                    val hash = RealFaceBiometricEngine.extractBiometricHash(face)
-                                                    if (hash != null) {
-                                                        prefs.registeredFaceHash = hash
-                                                        prefs.isFaceEnrolled = true
-                                                        isCalibrated = true
-                                                        statusText = "Face Detected! Landmarks Locked."
+                                                    if (abs(face.headEulerAngleY) < 10f && abs(face.headEulerAngleX) < 10f) {
+                                                        val hash = RealFaceBiometricEngine.extractBiometricHash(face)
+                                                        if (hash != null) {
+                                                            prefs.registeredFaceHash = hash
+                                                            prefs.isFaceEnrolled = true
+                                                            isCalibrated = true
+                                                            statusText = "133 Contour Landmarks Locked!"
+                                                        }
+                                                    } else {
+                                                        statusText = "Please face straight forward"
                                                     }
                                                 } else {
-                                                    statusText = "Searching for face..."
+                                                    statusText = "Hold face inside circle..."
                                                 }
                                             }
                                             .addOnCompleteListener { imageProxy.close() }
@@ -909,17 +913,18 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
     )
 }
 
-// ---------------- REAL FACE UNLOCK SCREEN (ML KIT DRIVEN) ----------------
+// ---------------- MULTI-FRAME AUTHENTICATION UNLOCK SCREEN ----------------
 @Composable
 fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    var scanStatus by remember { mutableStateOf("Looking for owner's face...") }
+    var scanStatus by remember { mutableStateOf("Scanning face mesh...") }
     var scanMatched by remember { mutableStateOf(false) }
+    var consecutiveMatches by remember { mutableIntStateOf(0) }
 
     val detectorOptions = remember {
         FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+            .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
             .build()
     }
     val detector = remember { FaceDetection.getClient(detectorOptions) }
@@ -932,7 +937,7 @@ fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     ) {
         ShimmerNeonText("Face ID Biometric Access", size = 22)
         Spacer(Modifier.height(8.dp))
-        Text("Look into the front camera to unlock", fontSize = 12.sp, color = Color.Gray)
+        Text("Only registered owner can authenticate", fontSize = 12.sp, color = Color.Gray)
         Spacer(Modifier.height(30.dp))
 
         Box(
@@ -968,17 +973,23 @@ fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
                                             if (currentHash != null && prefs.registeredFaceHash.isNotEmpty()) {
                                                 val isMatch = RealFaceBiometricEngine.verifyFaces(prefs.registeredFaceHash, currentHash)
                                                 if (isMatch) {
-                                                    scanMatched = true
-                                                    scanStatus = "Owner Verified! Unlocking..."
-                                                    ContextCompat.getMainExecutor(ctx).execute {
-                                                        onVerified()
+                                                    consecutiveMatches++
+                                                    scanStatus = "Verifying Identity ($consecutiveMatches/3)..."
+                                                    if (consecutiveMatches >= 3) {
+                                                        scanMatched = true
+                                                        scanStatus = "Owner Authenticated! Unlocking..."
+                                                        ContextCompat.getMainExecutor(ctx).execute {
+                                                            onVerified()
+                                                        }
                                                     }
                                                 } else {
+                                                    consecutiveMatches = 0
                                                     scanStatus = "Unknown Face • Access Denied"
                                                 }
                                             }
                                         } else {
-                                            scanStatus = "No face in frame..."
+                                            consecutiveMatches = 0
+                                            scanStatus = "Face not detected"
                                         }
                                     }
                                     .addOnCompleteListener { imageProxy.close() }
