@@ -38,18 +38,26 @@ class AgentAccessibilityService : AccessibilityService() {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
-        showIsland("Agent OS Ready")
+        
+        val prefs = AppPrefs(this)
+        if (prefs.isIslandEnabled) {
+            showIsland("Agent OS Ready")
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
-    override fun onInterrupt() { showIsland("Paused") }
+
+    override fun onInterrupt() {
+        showIsland("Paused")
+    }
 
     override fun onDestroy() {
-        island?.let { windowManager?.removeView(it) }
-        island = null
+        hideIsland()
         instance = null
         super.onDestroy()
     }
+
+    // ---------------- DYNAMIC ISLAND ENGINE ----------------
 
     fun updateIslandGeometry() {
         Handler(Looper.getMainLooper()).post {
@@ -67,7 +75,7 @@ class AgentAccessibilityService : AccessibilityService() {
                 val shape = GradientDrawable().apply {
                     setColor(0xEE0B0D18.toInt())
                     cornerRadius = prefs.islandRadius
-                    setStroke(2, 0xFF00FFCC.toInt())
+                    setStroke(2, 0xFF00E5FF.toInt())
                 }
                 view.background = shape
 
@@ -80,13 +88,15 @@ class AgentAccessibilityService : AccessibilityService() {
         Handler(Looper.getMainLooper()).post {
             try {
                 val prefs = AppPrefs(this)
+                if (!prefs.isIslandEnabled) return@post
+
                 val wm = windowManager ?: getSystemService(Context.WINDOW_SERVICE) as WindowManager
                 windowManager = wm
 
                 val shape = GradientDrawable().apply {
                     setColor(0xEE0B0D18.toInt())
                     cornerRadius = prefs.islandRadius
-                    setStroke(2, 0xFF00FFCC.toInt())
+                    setStroke(2, 0xFF00E5FF.toInt())
                 }
 
                 if (island == null) {
@@ -117,8 +127,19 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
+    fun hideIsland() {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                island?.let { windowManager?.removeView(it) }
+                island = null
+            } catch (_: Throwable) {}
+        }
+    }
+
+    // ---------------- SCREEN PARSING & GROUNDING ----------------
+
     fun getIndexedScreenElements(): String {
-        val root = rootInActiveWindow ?: return "Screen tree empty."
+        val root = rootInActiveWindow ?: return "Screen tree empty or locked."
         elementBoundsMap.clear()
         val elements = mutableListOf<String>()
         traverseNodes(root, elements, 1)
@@ -154,6 +175,8 @@ class AgentAccessibilityService : AccessibilityService() {
         return currentId
     }
 
+    // ---------------- AUTOMATION ACTIONS ----------------
+
     fun clickElementById(id: Int): Boolean {
         val coords = elementBoundsMap[id] ?: return false
         return clickCoordinates(coords.first, coords.second)
@@ -185,5 +208,14 @@ class AgentAccessibilityService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
             .build()
         return dispatchGesture(gesture, null, null)
+    }
+
+    fun swipeVertical(fraction: Float): String {
+        val dm = resources.displayMetrics
+        val x = dm.widthPixels / 2f
+        val y1 = dm.heightPixels * (if (fraction > 0) 0.75f else 0.25f)
+        val y2 = dm.heightPixels * (if (fraction > 0) 0.25f else 0.75f)
+        swipe(x, y1, x, y2)
+        return if (fraction > 0) "Scrolled down" else "Scrolled up"
     }
 }
