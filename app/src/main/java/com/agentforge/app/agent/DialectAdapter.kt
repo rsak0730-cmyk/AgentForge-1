@@ -3,14 +3,12 @@ package com.agentforge.app.agent
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
-import com.agentforge.app.data.AppPrefs
 import java.util.Locale
 
 object DialectAdapter {
 
     fun applyRealisticGirlVoice(context: Context, tts: TextToSpeech?, text: String) {
         if (tts == null) return
-        val prefs = AppPrefs(context)
         val lower = text.lowercase()
         val isBengali = lower.contains("kemon") || lower.contains("aacho") || lower.contains("bhalo") || lower.contains("korbo")
 
@@ -18,28 +16,25 @@ object DialectAdapter {
 
         try {
             tts.language = targetLocale
-            tts.setPitch(prefs.customVoicePitch)
-            tts.setSpeechRate(prefs.customVoiceSpeed)
+            // Realistic sweet female pitch & pace preset
+            tts.setPitch(1.22f)
+            tts.setSpeechRate(1.02f)
 
             val voices = tts.voices
             if (!voices.isNullOrEmpty()) {
-                val chosenVoiceName = prefs.selectedVoiceName
-                var matchedVoice: Voice? = null
+                // Priority scan for Google Speech Services high quality female voices
+                val bestFemaleVoice: Voice? = voices.firstOrNull { voice ->
+                    val name = voice.name.lowercase()
+                    (name.contains("hi-in-x-hie") || name.contains("hi-in-x-hia") || 
+                     name.contains("female") || name.contains("#female") || 
+                     name.contains("en-in-x-end")) && !voice.isNetworkConnectionRequired
+                } ?: voices.firstOrNull { voice ->
+                    val name = voice.name.lowercase()
+                    (name.contains("female") || name.contains("#female"))
+                } ?: voices.firstOrNull { it.locale.language == targetLocale.language }
 
-                if (chosenVoiceName != "default_female") {
-                    matchedVoice = voices.firstOrNull { it.name.equals(chosenVoiceName, ignoreCase = true) }
-                }
-
-                if (matchedVoice == null) {
-                    matchedVoice = voices.firstOrNull { voice ->
-                        val name = voice.name.lowercase()
-                        (name.contains("female") || name.contains("#female") || name.contains("hi-in-x-hie") || name.contains("en-in-x-end")) &&
-                                !voice.isNetworkConnectionRequired
-                    } ?: voices.firstOrNull { it.locale.language == targetLocale.language && it.name.lowercase().contains("female") }
-                }
-
-                if (matchedVoice != null) {
-                    tts.voice = matchedVoice
+                if (bestFemaleVoice != null) {
+                    tts.voice = bestFemaleVoice
                 }
             }
         } catch (_: Exception) {}

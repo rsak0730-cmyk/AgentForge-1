@@ -39,20 +39,7 @@ class AppPrefs(context: Context) {
         get() = prefs.getBoolean("is_sleeping", false)
         set(v) = prefs.edit().putBoolean("is_sleeping", v).apply()
 
-    // ---------------- CUSTOM VOICE STUDIO CONFIG ----------------
-    var customVoicePitch: Float
-        get() = prefs.getFloat("custom_voice_pitch", 1.25f)
-        set(v) = prefs.edit().putFloat("custom_voice_pitch", v).apply()
-
-    var customVoiceSpeed: Float
-        get() = prefs.getFloat("custom_voice_speed", 1.02f)
-        set(v) = prefs.edit().putFloat("custom_voice_speed", v).apply()
-
-    var selectedVoiceName: String
-        get() = prefs.getString("selected_voice_name", "default_female") ?: "default_female"
-        set(v) = prefs.edit().putString("selected_voice_name", v).apply()
-
-    // ---------------- AI API VAULT (DEFAULT UPDATED TO gemini-3.8-flash) ----------------
+    // ---------------- AI API VAULT (DEFAULT TO gemini-3.8-flash) ----------------
     var provider: String
         get() = prefs.getString("ai_provider", "gemini") ?: "gemini"
         set(v) = prefs.edit().putString("ai_provider", v).apply()

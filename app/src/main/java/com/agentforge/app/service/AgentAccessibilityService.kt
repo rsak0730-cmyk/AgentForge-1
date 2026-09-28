@@ -117,15 +117,14 @@ class AgentAccessibilityService : AccessibilityService() {
     override fun onKeyEvent(event: KeyEvent?): Boolean {
         if (event == null) return false
 
-        val keyCode = event.keyCode
-        val action = event.action
+        val currentKeyCode = event.keyCode
+        val currentAction = event.action
 
-        when (keyCode) {
+        when (currentKeyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> {
-                when (action) {
+                when (currentAction) {
                     KeyEvent.ACTION_DOWN -> {
                         isVolumeUpPressed = true
-                        // Check if both keys are now pressed simultaneously
                         if (isVolumeDownPressed && !isChordHoldTriggered) {
                             keyHandler.removeCallbacks(chordHoldRunnable)
                             keyHandler.postDelayed(chordHoldRunnable, 2500)
@@ -137,7 +136,6 @@ class AgentAccessibilityService : AccessibilityService() {
                         isVolumeUpPressed = false
                         keyHandler.removeCallbacks(chordHoldRunnable)
 
-                        // 1-Click to Turn OFF when listening is active
                         if (isListeningActive && !isChordHoldTriggered) {
                             isListeningActive = false
                             triggerHaptic(false)
@@ -159,10 +157,9 @@ class AgentAccessibilityService : AccessibilityService() {
             }
 
             KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                when (action) {
+                when (currentAction) {
                     KeyEvent.ACTION_DOWN -> {
                         isVolumeDownPressed = true
-                        // Check if both keys are now pressed simultaneously
                         if (isVolumeUpPressed && !isChordHoldTriggered) {
                             keyHandler.removeCallbacks(chordHoldRunnable)
                             keyHandler.postDelayed(chordHoldRunnable, 2500)

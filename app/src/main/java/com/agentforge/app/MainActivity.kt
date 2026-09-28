@@ -536,7 +536,7 @@ private fun ApiPage(prefs: AppPrefs) {
                     onClick = {
                         provider = p
                         when (p) {
-                            "gemini" -> { model = "gemini-2.5-flash"; base = "https://generativelanguage.googleapis.com" }
+                            "gemini" -> { model = "gemini-3.8-flash"; base = "https://generativelanguage.googleapis.com" }
                             "openai" -> { model = "gpt-4o-mini"; base = "https://api.openai.com/v1" }
                             "openrouter" -> { model = "meta-llama/llama-3.3-70b-instruct"; base = "https://openrouter.ai/api/v1" }
                         }
@@ -669,8 +669,6 @@ private fun SettingsPage(
     val context = LocalContext.current
     var assistantName by remember { mutableStateOf(prefs.name) }
     var wakeWord by remember { mutableStateOf(prefs.wakeWord) }
-    var voicePitch by remember { mutableFloatStateOf(prefs.customVoicePitch) }
-    var voiceSpeed by remember { mutableFloatStateOf(prefs.customVoiceSpeed) }
     var isTestingTts by remember { mutableStateOf(false) }
 
     var faceLock by remember { mutableStateOf(prefs.isFaceLockEnabled) }
@@ -702,7 +700,7 @@ private fun SettingsPage(
         )
 
         Spacer(Modifier.height(18.dp))
-        ShimmerNeonText("Mira Voice Studio & Acoustics", size = 16)
+        ShimmerNeonText("Realistic Female Voice Profile", size = 16)
         Spacer(Modifier.height(8.dp))
 
         Box(Modifier.fillMaxWidth().neumorphicCard(14).padding(14.dp)) {
@@ -711,22 +709,12 @@ private fun SettingsPage(
                     Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = NeonBlueAccent)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("Realistic Girl Voice Tuning", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
-                        Text("Adjust pitch & speed to match your favorite companion style", fontSize = 11.sp, color = Color.Gray)
+                        Text("Real-Life Girl Voice Active", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
+                        Text("High-fidelity natural female dialect automatically tuned", fontSize = 11.sp, color = Color(0xFF00FF7F))
                     }
                 }
 
                 Spacer(Modifier.height(14.dp))
-                SliderItem("Voice Pitch (Acoustic Height)", voicePitch, 0.7f, 1.8f) {
-                    voicePitch = it
-                    prefs.customVoicePitch = it
-                }
-                SliderItem("Speech Pace (Flow Rate)", voiceSpeed, 0.7f, 1.5f) {
-                    voiceSpeed = it
-                    prefs.customVoiceSpeed = it
-                }
-
-                Spacer(Modifier.height(10.dp))
                 Button(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
@@ -734,14 +722,14 @@ private fun SettingsPage(
                         var previewTts: TextToSpeech? = null
                         previewTts = TextToSpeech(context) { status ->
                             if (status == TextToSpeech.SUCCESS) {
-                                DialectAdapter.applyRealisticGirlVoice(context, previewTts, "Haan Manish, suniye! Yeh meri nayi voice hai, aapko kaisi lagi?")
-                                previewTts?.speak("Haan Manish, suniye! Yeh meri nayi voice hai, aapko kaisi lagi?", TextToSpeech.QUEUE_FLUSH, null, "PREVIEW")
+                                DialectAdapter.applyRealisticGirlVoice(context, previewTts, "Haan Manish, suniye! Main aapke sath hoon, boliye kya kaam hai?")
+                                previewTts?.speak("Haan Manish, suniye! Main aapke sath hoon, boliye kya kaam hai?", TextToSpeech.QUEUE_FLUSH, null, "PREVIEW")
                             }
                             isTestingTts = false
                         }
                     }
                 ) {
-                    Text(if (isTestingTts) "Generating Voice..." else "Preview Voice (Sunke Dekho)")
+                    Text(if (isTestingTts) "Speaking..." else "Preview Voice (Aawaz Suniye)")
                 }
             }
         }
