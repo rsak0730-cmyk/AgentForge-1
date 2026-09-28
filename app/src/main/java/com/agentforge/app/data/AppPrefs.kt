@@ -81,6 +81,11 @@ class AppPrefs(context: Context) {
         get() = securePrefs.getString("registered_voiceprint", "") ?: ""
         set(v) = securePrefs.edit().putString("registered_voiceprint", v).apply()
 
+    // Fix for VoiceprintManager unresolved reference
+    var enrolledVoiceprint: String
+        get() = registeredVoiceprint
+        set(v) { registeredVoiceprint = v }
+
     // ---------------- DYNAMIC ISLAND GEOMETRY & TOGGLES ----------------
     var isIslandEnabled: Boolean
         get() = prefs.getBoolean("island_enabled", true)
@@ -101,6 +106,11 @@ class AppPrefs(context: Context) {
     var islandHeight: Float
         get() = prefs.getFloat("island_height", 42f)
         set(v) = prefs.edit().putFloat("island_height", v).apply()
+
+    // Fix for AgentAccessibilityService unresolved reference
+    var islandRadius: Float
+        get() = prefs.getFloat("island_radius", 24f)
+        set(v) = prefs.edit().putFloat("island_radius", v).apply()
 
     // ---------------- SYSTEM LEVEL FLAGS ----------------
     var isAccessibilityEnabled: Boolean
