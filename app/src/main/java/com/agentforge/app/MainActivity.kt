@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -18,6 +17,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -41,7 +41,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
@@ -65,16 +64,20 @@ import com.agentforge.app.agent.AgentEngine
 import com.agentforge.app.agent.AiClient
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
+import com.agentforge.app.security.RealFaceBiometricEngine
 import com.agentforge.app.security.SecurityVault
-import com.agentforge.app.security.VoiceprintManager
 import com.agentforge.app.service.AgentAccessibilityService
 import com.agentforge.app.service.VoiceListenerService
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetectorOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.Executors
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -127,7 +130,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ---------------- NEUMORPHIC COLOR PALETTE & STYLES ----------------
 val NeuBackground = Color(0xFF0F111A)
 val NeuSurface = Color(0xFF151824)
 val NeuLightShadow = Color(0xFF1E2235)
@@ -135,7 +137,6 @@ val NeuDarkShadow = Color(0xFF08090E)
 val WhiteNeonBlue = Color(0xFFE0F7FA)
 val NeonBlueAccent = Color(0xFF00E5FF)
 
-// Shimmering white-neon blue text
 @Composable
 fun ShimmerNeonText(text: String, size: Int = 16, weight: FontWeight = FontWeight.Bold) {
     val transition = rememberInfiniteTransition(label = "shimmer")
@@ -171,7 +172,6 @@ fun ShimmerNeonText(text: String, size: Int = 16, weight: FontWeight = FontWeigh
     )
 }
 
-// Soft Extruded Neumorphic Card Modifier
 fun Modifier.neumorphicCard(cornerRadius: Int = 16): Modifier = this
     .shadow(
         elevation = 6.dp,
@@ -195,7 +195,7 @@ fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
         )
     ) {
         if (!isAppUnlocked && prefs.isFaceLockEnabled && prefs.isFaceEnrolled) {
-            FaceScanUnlockScreen(
+            RealFaceUnlockScreen(
                 prefs = prefs,
                 onVerified = { isAppUnlocked = true }
             )
@@ -232,7 +232,6 @@ fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
     }
 }
 
-// ---------------- SIRI / GEMINI FLUID GLOW ORB COMPONENT ----------------
 @Composable
 fun FluidGlowOrb(isActive: Boolean) {
     val infiniteTransition = rememberInfiniteTransition(label = "fluid_orb")
@@ -272,7 +271,6 @@ fun FluidGlowOrb(isActive: Boolean) {
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val baseRadius = size.minDimension / 3.2f
 
-                // Outer diffused glow layer
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(orbCyan.copy(alpha = 0.45f), Color.Transparent),
@@ -283,14 +281,12 @@ fun FluidGlowOrb(isActive: Boolean) {
                     radius = baseRadius * 1.8f
                 )
 
-                // Liquid fluid morphing blobs
                 val angleRad = Math.toRadians(morphRotation.toDouble())
                 val offsetX1 = (cos(angleRad) * 22).toFloat()
                 val offsetY1 = (sin(angleRad) * 22).toFloat()
                 val offsetX2 = (-sin(angleRad) * 20).toFloat()
                 val offsetY2 = (cos(angleRad) * 20).toFloat()
 
-                // Primary Violet/Magenta Blob
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(orbMagenta.copy(alpha = 0.75f), orbViolet.copy(alpha = 0.2f), Color.Transparent),
@@ -302,7 +298,6 @@ fun FluidGlowOrb(isActive: Boolean) {
                     blendMode = BlendMode.Screen
                 )
 
-                // Secondary Cyan/Blue Blob
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(orbCyan.copy(alpha = 0.85f), orbBlue.copy(alpha = 0.3f), Color.Transparent),
@@ -314,7 +309,6 @@ fun FluidGlowOrb(isActive: Boolean) {
                     blendMode = BlendMode.Screen
                 )
 
-                // High-Intensity White Core Spark
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(Color.White, Color.Transparent),
@@ -329,7 +323,6 @@ fun FluidGlowOrb(isActive: Boolean) {
     }
 }
 
-// ---------------- TAB 1: CHAT WITH FLUID ORB & 4-COLOR BORDER ----------------
 @Composable
 private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
     val context = LocalContext.current
@@ -404,10 +397,8 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
             }
         }
 
-        // Live Siri/Gemini Fluid Glow Orb above input box
         FluidGlowOrb(isActive = busy || isListeningVoice)
 
-        // Text Input Bar with animated sweep border when busy
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -484,7 +475,6 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
     }
 }
 
-// ---------------- TAB 2: API CONFIG ----------------
 @Composable
 private fun ApiPage(prefs: AppPrefs) {
     val context = LocalContext.current
@@ -566,7 +556,6 @@ private fun ApiPage(prefs: AppPrefs) {
     }
 }
 
-// ---------------- TAB 3: VOICEMAIL ----------------
 @Composable
 private fun VoicemailPage() {
     val context = LocalContext.current
@@ -632,17 +621,14 @@ private fun VoicemailPage() {
     }
 }
 
-// ---------------- TAB 4: SETTINGS ----------------
 @Composable
 private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
     var assistantName by remember { mutableStateOf(prefs.name) }
     var wakeWord by remember { mutableStateOf(prefs.wakeWord) }
     var faceLock by remember { mutableStateOf(prefs.isFaceLockEnabled) }
     var isFaceEnrolled by remember { mutableStateOf(prefs.isFaceEnrolled) }
-    var isScanningFace by remember { mutableStateOf(false) }
+    var showEnrollDialog by remember { mutableStateOf(false) }
 
     var isIslandOn by remember { mutableStateOf(prefs.isIslandEnabled) }
     var ix by remember { mutableFloatStateOf(prefs.islandX) }
@@ -669,7 +655,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
         )
 
         Spacer(Modifier.height(18.dp))
-        ShimmerNeonText("Real Face ID Biometrics", size = 16)
+        ShimmerNeonText("Real Face ID Biometrics (ML Kit)", size = 16)
         Spacer(Modifier.height(8.dp))
 
         Box(Modifier.fillMaxWidth().neumorphicCard(14).padding(14.dp)) {
@@ -678,9 +664,9 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                     Icon(Icons.Default.Face, contentDescription = null, tint = NeonBlueAccent)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("Face Scan Data", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
+                        Text("Facial Geometric Hash", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
                         Text(
-                            text = if (isFaceEnrolled) "Face Enrolled • Ready to Lock" else "No Face Registered • Scan face first",
+                            text = if (isFaceEnrolled) "Face Vector Enrolled • Biometrics Active" else "No Face Enrolled • Real camera calibration required",
                             fontSize = 11.sp,
                             color = if (isFaceEnrolled) Color(0xFF00FF7F) else Color.Gray
                         )
@@ -692,19 +678,9 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         modifier = Modifier.weight(1f),
-                        onClick = {
-                            isScanningFace = true
-                            scope.launch {
-                                delay(2200)
-                                prefs.registeredFaceHash = "BIO_HASH_${System.currentTimeMillis()}"
-                                prefs.isFaceEnrolled = true
-                                isFaceEnrolled = true
-                                isScanningFace = false
-                                Toast.makeText(context, "Face Registered Successfully!", Toast.LENGTH_SHORT).show()
-                            }
-                        }
+                        onClick = { showEnrollDialog = true }
                     ) {
-                        Text(if (isScanningFace) "Scanning Camera..." else if (isFaceEnrolled) "Re-Scan Face" else "Scan & Register Face")
+                        Text(if (isFaceEnrolled) "Re-Enroll Real Face" else "Enroll Real Face")
                     }
 
                     if (isFaceEnrolled) {
@@ -715,7 +691,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                                 prefs.registeredFaceHash = ""
                                 isFaceEnrolled = false
                                 faceLock = false
-                                Toast.makeText(context, "Face Data Deleted", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Face Vector Erased", Toast.LENGTH_SHORT).show()
                             }
                         ) { Text("Delete") }
                     }
@@ -724,7 +700,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                 Spacer(Modifier.height(12.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Enable Face ID App Lock", modifier = Modifier.weight(1f), color = WhiteNeonBlue, fontSize = 13.sp)
+                    Text("Enable Real Face ID App Lock", modifier = Modifier.weight(1f), color = WhiteNeonBlue, fontSize = 13.sp)
                     Switch(
                         checked = faceLock && isFaceEnrolled,
                         enabled = isFaceEnrolled,
@@ -814,6 +790,18 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
             ) { Text("Accessibility") }
         }
     }
+
+    if (showEnrollDialog) {
+        RealFaceEnrollDialog(
+            prefs = prefs,
+            onDismiss = { showEnrollDialog = false },
+            onEnrolled = {
+                isFaceEnrolled = true
+                showEnrollDialog = false
+                Toast.makeText(context, "Real Face Vector Stored in Keystore!", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
 }
 
 @Composable
@@ -824,23 +812,118 @@ private fun SliderItem(label: String, value: Float, min: Float, max: Float, onVa
     }
 }
 
-// ---------------- REAL FACE SCAN SCREEN ----------------
+// ---------------- REAL FACE ENROLLMENT DIALOG ----------------
 @Composable
-fun FaceScanUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
+fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    var scanStatus by remember { mutableStateOf("Face Scanner active. Looking for owner...") }
-    var scanProgress by remember { mutableFloatStateOf(0f) }
+    var statusText by remember { mutableStateOf("Position your face directly inside the circle") }
+    var isCalibrated by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        while (scanProgress < 1f) {
-            delay(120)
-            scanProgress += 0.08f
-            if (scanProgress > 0.4f) scanStatus = "Matching facial vector hash..."
-            if (scanProgress > 0.85f) scanStatus = "Owner Verified! Unlocking..."
-        }
-        delay(200)
-        onVerified()
+    val detectorOptions = remember {
+        FaceDetectorOptions.Builder()
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+            .setLandmarkMode(FaceLandmark.LANDMARK_MODE_ALL)
+            .build()
     }
+    val detector = remember { FaceDetection.getClient(detectorOptions) }
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NeuBackground,
+        title = { ShimmerNeonText("Calibrate Real Biometrics", size = 18) },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .size(200.dp)
+                        .clip(CircleShape)
+                        .border(3.dp, if (isCalibrated) Color(0xFF00FF7F) else NeonBlueAccent, CircleShape)
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            val previewView = PreviewView(ctx)
+                            val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                            cameraProviderFuture.addListener({
+                                val cameraProvider = cameraProviderFuture.get()
+                                val preview = Preview.Builder().build().also {
+                                    it.setSurfaceProvider(previewView.surfaceProvider)
+                                }
+
+                                val imageAnalysis = ImageAnalysis.Builder()
+                                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                    .build()
+
+                                imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                                    val mediaImage = imageProxy.image
+                                    if (mediaImage != null) {
+                                        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                                        detector.process(image)
+                                            .addOnSuccessListener { faces ->
+                                                if (faces.isNotEmpty()) {
+                                                    val face = faces[0]
+                                                    val hash = RealFaceBiometricEngine.extractBiometricHash(face)
+                                                    if (hash != null) {
+                                                        prefs.registeredFaceHash = hash
+                                                        prefs.isFaceEnrolled = true
+                                                        isCalibrated = true
+                                                        statusText = "Face Detected! Landmarks Locked."
+                                                    }
+                                                } else {
+                                                    statusText = "Searching for face..."
+                                                }
+                                            }
+                                            .addOnCompleteListener { imageProxy.close() }
+                                    } else {
+                                        imageProxy.close()
+                                    }
+                                }
+
+                                cameraProvider.unbindAll()
+                                cameraProvider.bindToLifecycle(
+                                    lifecycleOwner,
+                                    CameraSelector.DEFAULT_FRONT_CAMERA,
+                                    preview,
+                                    imageAnalysis
+                                )
+                            }, ContextCompat.getMainExecutor(ctx))
+                            previewView
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                Spacer(Modifier.height(14.dp))
+                Text(statusText, color = WhiteNeonBlue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = isCalibrated,
+                onClick = onEnrolled
+            ) { Text("Save Biometrics") }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+// ---------------- REAL FACE UNLOCK SCREEN (ML KIT DRIVEN) ----------------
+@Composable
+fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var scanStatus by remember { mutableStateOf("Looking for owner's face...") }
+    var scanMatched by remember { mutableStateOf(false) }
+
+    val detectorOptions = remember {
+        FaceDetectorOptions.Builder()
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+            .setLandmarkMode(FaceLandmark.LANDMARK_MODE_ALL)
+            .build()
+    }
+    val detector = remember { FaceDetection.getClient(detectorOptions) }
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
     Column(
         Modifier.fillMaxSize().background(NeuBackground).padding(24.dp),
@@ -849,14 +932,14 @@ fun FaceScanUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     ) {
         ShimmerNeonText("Face ID Biometric Access", size = 22)
         Spacer(Modifier.height(8.dp))
-        Text("Look into the front camera", fontSize = 12.sp, color = Color.Gray)
+        Text("Look into the front camera to unlock", fontSize = 12.sp, color = Color.Gray)
         Spacer(Modifier.height(30.dp))
 
         Box(
             modifier = Modifier
-                .size(240.dp)
+                .size(230.dp)
                 .clip(CircleShape)
-                .border(3.dp, NeonBlueAccent, CircleShape),
+                .border(3.dp, if (scanMatched) Color(0xFF00FF7F) else NeonBlueAccent, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             AndroidView(
@@ -864,14 +947,53 @@ fun FaceScanUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
                     val previewView = PreviewView(ctx)
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                     cameraProviderFuture.addListener({
-                        try {
-                            val cameraProvider = cameraProviderFuture.get()
-                            val preview = Preview.Builder().build().also {
-                                it.setSurfaceProvider(previewView.surfaceProvider)
+                        val cameraProvider = cameraProviderFuture.get()
+                        val preview = Preview.Builder().build().also {
+                            it.setSurfaceProvider(previewView.surfaceProvider)
+                        }
+
+                        val imageAnalysis = ImageAnalysis.Builder()
+                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .build()
+
+                        imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                            val mediaImage = imageProxy.image
+                            if (mediaImage != null && !scanMatched) {
+                                val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                                detector.process(image)
+                                    .addOnSuccessListener { faces ->
+                                        if (faces.isNotEmpty()) {
+                                            val face = faces[0]
+                                            val currentHash = RealFaceBiometricEngine.extractBiometricHash(face)
+                                            if (currentHash != null && prefs.registeredFaceHash.isNotEmpty()) {
+                                                val isMatch = RealFaceBiometricEngine.verifyFaces(prefs.registeredFaceHash, currentHash)
+                                                if (isMatch) {
+                                                    scanMatched = true
+                                                    scanStatus = "Owner Verified! Unlocking..."
+                                                    ContextCompat.getMainExecutor(ctx).execute {
+                                                        onVerified()
+                                                    }
+                                                } else {
+                                                    scanStatus = "Unknown Face • Access Denied"
+                                                }
+                                            }
+                                        } else {
+                                            scanStatus = "No face in frame..."
+                                        }
+                                    }
+                                    .addOnCompleteListener { imageProxy.close() }
+                            } else {
+                                imageProxy.close()
                             }
-                            cameraProvider.unbindAll()
-                            cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, preview)
-                        } catch (_: Throwable) {}
+                        }
+
+                        cameraProvider.unbindAll()
+                        cameraProvider.bindToLifecycle(
+                            lifecycleOwner,
+                            CameraSelector.DEFAULT_FRONT_CAMERA,
+                            preview,
+                            imageAnalysis
+                        )
                     }, ContextCompat.getMainExecutor(ctx))
                     previewView
                 },
@@ -880,12 +1002,6 @@ fun FaceScanUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
         }
 
         Spacer(Modifier.height(28.dp))
-        LinearProgressIndicator(
-            progress = { scanProgress },
-            modifier = Modifier.fillMaxWidth(0.7f),
-            color = NeonBlueAccent
-        )
-        Spacer(Modifier.height(14.dp))
-        Text(scanStatus, fontSize = 13.sp, color = WhiteNeonBlue, fontWeight = FontWeight.SemiBold)
+        Text(scanStatus, fontSize = 13.sp, color = if (scanMatched) Color(0xFF00FF7F) else WhiteNeonBlue, fontWeight = FontWeight.SemiBold)
     }
 }
