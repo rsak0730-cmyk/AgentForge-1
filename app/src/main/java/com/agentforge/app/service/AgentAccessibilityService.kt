@@ -19,6 +19,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -53,6 +54,8 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
     companion object {
         var instance: AgentAccessibilityService? = null
             private set
+        var isNearEar: Boolean = false
+            private set
     }
 
     private var islandRoot: FrameLayout? = null
@@ -71,11 +74,13 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
     private var hasWarned30Min = false
     private lateinit var shizukuBridge: ShizukuBridge
     private lateinit var predictiveEngine: PredictiveActionEngine
+    private lateinit var audioManager: AudioManager
 
     // ---------------- HARDWARE SENSORY & AMBIENT AWARENESS ----------------
     private var sensorManager: SensorManager? = null
     private var lightSensor: Sensor? = null
     private var accelSensor: Sensor? = null
+    private var proximitySensor: Sensor? = null
     private var lastDarkWarningMs: Long = 0L
     private var lastJerkWarningMs: Long = 0L
 
@@ -92,12 +97,12 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
     private val spontaneousNoteRunnable = object : Runnable {
         override fun run() {
             val prefs = AppPrefs(this@AgentAccessibilityService)
-            if (prefs.isIslandEnabled) {
+            if (prefs.isIslandEnabled && !isNearEar) {
                 val note = loveNotes.random()
                 showIsland("💌 $note")
                 triggerHeartbeatHaptic()
             }
-            spontaneousHandler.postDelayed(this, 1000L * 60 * 35) // Every 35 mins
+            spontaneousHandler.postDelayed(this, 1000L * 60 * 35)
         }
     }
 
@@ -113,7 +118,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
             isChordHoldTriggered = true
             isListeningActive = true
             triggerHeartbeatHaptic()
-            showIsland("🎙️ Listening Mode ON")
+            showIsland(if (isNearEar) "🤫 Secret Whisper Active" else "🎙️ Listening Mode ON")
 
             val intent = Intent(this, VoiceListenerService::class.java).apply {
                 action = VoiceListenerService.ACTION_START_LISTENING
@@ -134,13 +139,17 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         clipboardManager?.addPrimaryClipChangedListener(clipListener)
         shizukuBridge = ShizukuBridge(this)
         predictiveEngine = PredictiveActionEngine(this)
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
-        // Initialize Ambient Light & Motion Sensors
+        // Hardware Sensors: Light, Motion & Proximity
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         lightSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_LIGHT)
         accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        proximitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+
         lightSensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
         accelSensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
+        proximitySensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
 
         serviceInfo = serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or
@@ -149,37 +158,65 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
 
         val prefs = AppPrefs(this)
         if (prefs.isIslandEnabled) {
-            showIsland("${prefs.name} Online • Heartbeat Sync")
+            showIsland("${prefs.name} Online • Sensory Linked")
         }
 
         predictiveEngine.dispatchPreloadedIslandSuggestion()
         spontaneousHandler.postDelayed(spontaneousNoteRunnable, 1000L * 60 * 12)
     }
 
-    // ---------------- SENSOR EVENT LISTENER ----------------
+    // ---------------- SENSORY HARDWARE ENGINE (PROXIMITY EARPIECE SWITCH) ----------------
     override fun onSensorChanged(event: SensorEvent?) {
         if (event == null) return
         val now = SystemClock.elapsedRealtime()
 
-        if (event.sensor.type == Sensor.TYPE_LIGHT) {
-            val lux = event.values[0]
-            if (lux < 2.0f && (now - lastDarkWarningMs) > 1000L * 60 * 45) {
-                lastDarkWarningMs = now
-                val pet = AppPrefs(this).userPetName
-                showIsland("🌙 Andhere me screen mat dekho $pet!")
-                triggerComfortPulseHaptic()
+        when (event.sensor.type) {
+            Sensor.TYPE_PROXIMITY -> {
+                val distance = event.values[0]
+                val maxRange = event.sensor.maximumRange
+                val isClose = distance < maxRange && distance < 4.0f
+                if (isClose != isNearEar) {
+                    isNearEar = isClose
+                    handleProximityAudioRouting(isNearEar)
+                }
             }
-        } else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-            val x = event.values[0]
-            val y = event.values[1]
-            val z = event.values[2]
-            val acceleration = sqrt((x * x + y * y + z * z).toDouble())
-            if (acceleration > 24.0 && (now - lastJerkWarningMs) > 10000L) {
-                lastJerkWarningMs = now
-                showIsland("⚠ Phone gira kya? Sambhal ke!")
-                triggerTapHaptic()
+            Sensor.TYPE_LIGHT -> {
+                val lux = event.values[0]
+                if (lux < 2.0f && (now - lastDarkWarningMs) > 1000L * 60 * 45) {
+                    lastDarkWarningMs = now
+                    val pet = AppPrefs(this).userPetName
+                    showIsland("🌙 Andhere me screen mat dekho $pet!")
+                    triggerComfortPulseHaptic()
+                }
+            }
+            Sensor.TYPE_ACCELEROMETER -> {
+                val x = event.values[0]
+                val y = event.values[1]
+                val z = event.values[2]
+                val acceleration = sqrt((x * x + y * y + z * z).toDouble())
+                if (acceleration > 24.0 && (now - lastJerkWarningMs) > 10000L) {
+                    lastJerkWarningMs = now
+                    showIsland("⚠ Phone gira kya? Sambhal ke!")
+                    triggerTapHaptic()
+                }
             }
         }
+    }
+
+    private fun handleProximityAudioRouting(nearEar: Boolean) {
+        try {
+            if (nearEar) {
+                // Route audio through phone earpiece receiver like a private call
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                audioManager.isSpeakerphoneOn = false
+                showIsland("🤫 Earpiece Whisper Connected")
+                triggerHeartbeatHaptic()
+            } else {
+                audioManager.mode = AudioManager.MODE_NORMAL
+                audioManager.isSpeakerphoneOn = true
+                showIsland("🔊 Loudspeaker Restored")
+            }
+        } catch (_: Exception) {}
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
@@ -251,7 +288,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         return super.onKeyEvent(event)
     }
 
-    // ---------------- PHYSICAL HAPTIC HEARTBEAT & TOUCH ENGINE ----------------
+    // ---------------- PHYSICAL HAPTIC TOUCH ENGINE ----------------
 
     fun triggerHeartbeatHaptic() {
         try {
@@ -300,12 +337,40 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         }
     }
 
+    // ---------------- WINGMAN AUTO-DETECTION & DETOX ----------------
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        val currentPkg = event.packageName?.toString() ?: return
+
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val pkg = event.packageName?.toString() ?: return
-            handleAppSwitchDetox(pkg)
+            handleAppSwitchDetox(currentPkg)
+            checkWingmanOpportunity(currentPkg)
         }
+    }
+
+    private fun checkWingmanOpportunity(pkg: String) {
+        val isChatApp = pkg.contains("whatsapp") || pkg.contains("instagram.android") || pkg.contains("messaging")
+        if (isChatApp) {
+            val root = rootInActiveWindow ?: return
+            val lastText = getLastIncomingMessage(root)
+            if (!lastText.isNullOrBlank() && lastText.length in 4..60) {
+                val reply = when {
+                    lastText.contains("kahan hai", true) -> "Bol de: 'Bahar hoon baad me milte hain!'"
+                    lastText.contains("kal", true) -> "Keh do: 'Kal busy hoon bhai'"
+                    lastText.contains("bhejo", true) -> "Bol de: 'Thodi der me bhejta hoon'"
+                    else -> "Wingman ready: Tap Island to auto-reply"
+                }
+                showIsland("💡 Wingman: $reply")
+            }
+        }
+    }
+
+    private fun getLastIncomingMessage(node: AccessibilityNodeInfo?): String? {
+        if (node == null) return null
+        val texts = mutableListOf<String>()
+        extractAllNodeTexts(node, StringBuilder())
+        return texts.lastOrNull()
     }
 
     private fun handleAppSwitchDetox(currentPkg: String) {
@@ -403,7 +468,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
 
                 if (islandRoot == null) {
                     val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-                        override fun singleTapConfirmed(e: MotionEvent): Boolean {
+                        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                             val intent = Intent(this@AgentAccessibilityService, VoiceListenerService::class.java).apply {
                                 action = VoiceListenerService.ACTION_START_LISTENING
                             }
@@ -678,6 +743,18 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         return false
     }
 
+    private fun extractAllNodeTexts(node: AccessibilityNodeInfo?, sb: StringBuilder) {
+        if (node == null) return
+        val text = node.text?.toString()?.trim()
+        val desc = node.contentDescription?.toString()?.trim()
+        if (!text.isNullOrEmpty()) sb.append(text).append("\n")
+        else if (!desc.isNullOrEmpty()) sb.append(desc).append("\n")
+
+        for (i in 0 until node.childCount) {
+            extractAllNodeTexts(node.getChild(i), sb)
+        }
+    }
+
     fun clickCoordinates(x: Float, y: Float): Boolean {
         val path = Path().apply { moveTo(x, y) }
         val stroke = GestureDescription.StrokeDescription(path, 0, 80)
@@ -741,7 +818,6 @@ class IslandBorderTrailView(context: Context) : View(context) {
         if (w <= 0 || h <= 0) return
 
         val rectF = RectF(strokeWidthPx / 2f, strokeWidthPx / 2f, w - strokeWidthPx / 2f, h - strokeWidthPx / 2f)
-
         canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, bgPaint)
 
         canvas.save()
