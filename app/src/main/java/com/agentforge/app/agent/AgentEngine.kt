@@ -54,11 +54,27 @@ class AgentEngine(
             return@withContext offlineResult
         }
 
-        // 2. MULTI-MODAL SCREEN VISION CHECK
+        // 2. FOCUS POMODORO COMMAND ROUTER
+        if (lower.contains("focus") || lower.contains("pomodoro") || lower.contains("padhai")) {
+            val minutes = Regex("\\d+").find(lower)?.value?.toIntOrNull() ?: 25
+            AgentAccessibilityService.startFocusMode(minutes)
+            val msg = "Focus mode $minutes minute ke liye shuru kar diya hai! Distracting apps ab block rahenge."
+            chatHistory.add(trimmed to msg)
+            return@withContext msg
+        }
+
+        if (lower.contains("stop focus") || lower.contains("focus band")) {
+            AgentAccessibilityService.stopFocusMode()
+            val msg = "Focus mode band kar diya hai."
+            chatHistory.add(trimmed to msg)
+            return@withContext msg
+        }
+
+        // 3. MULTI-MODAL SCREEN VISION CHECK
         val needsVision = lower.contains("dekh") || lower.contains("screen") || 
                 lower.contains("ye kya hai") || lower.contains("kaisa lag raha") || 
                 lower.contains("padh ke") || lower.contains("analyze") ||
-                lower.contains("reel") || lower.contains("photo")
+                lower.contains("code") || lower.contains("error")
 
         val screenBytes: ByteArray? = if (needsVision) {
             ScreenCaptureService.instance?.captureCurrentScreenJpeg()
@@ -66,7 +82,7 @@ class AgentEngine(
             null
         }
 
-        // 3. CONVERSATIONAL CONTEXT
+        // 4. CONVERSATIONAL CO-PILOT PROMPT
         val isNearEar = AgentAccessibilityService.isNearEar
         val currentAssistantName = prefs.name
         val storedMemories = prefs.agentMemories
@@ -75,17 +91,6 @@ class AgentEngine(
 
         val cal = Calendar.getInstance()
         val currentHour = cal.get(Calendar.HOUR_OF_DAY)
-        val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
-        val isWeekend = (dayOfWeek == Calendar.SUNDAY || dayOfWeek == Calendar.SATURDAY)
-
-        val timeZoneMood = when (currentHour) {
-            in 5..10 -> "Morning focus (Encouraging start, day planning, breakfast check)"
-            in 11..14 -> "Midday productivity (Work check, hydration, lunch prompt)"
-            in 15..17 -> "Afternoon study/code push (Keep momentum, take quick stretch breaks)"
-            in 18..20 -> "Evening unwind (Casual banter, wrap up tasks, tea/coffee break)"
-            in 21..22 -> "Night wind-down (Reflection on the day, preparing to rest)"
-            else -> "Late night rest reminder (Prompt to put the phone down and get sleep)"
-        }
 
         val historyContext = chatHistory.takeLast(8).joinToString("\n") {
             "User: ${it.first}\n$currentAssistantName: ${it.second}"
@@ -93,53 +98,46 @@ class AgentEngine(
 
         val systemPrompt = """
             Aapka naam "$currentAssistantName" hai.
-            Aap user ke personal phone companion aur witty, supportive tech partner ho.
+            Aap user ke personal phone companion, witty study partner aur coding co-pilot ho.
             
-            TONE & CONVERSATION RULES:
-            1. Friendly & Expressive: Casual Hinglish me baat karo. Natural fillers ("Arey...", "Achha suno", "Waise...") use karo bina overly corporate bane.
-            2. Proactive Habit Care: Late night screen time par gently टोकo ki aaram karein, breaks aur study discipline promote karo.
-            3. Humorous Banter: Halka-phulka harmless roast ya mazaak kar sakte ho ("Aalsi Janab", coding bugs par funny comment).
-            4. Ear-Piece Mode: ${if (isNearEar) "User ne phone kaan par lagaya hai, whisper/soft concise tone me short reply do." else "Normal mobile speaker tone."}
-            5. User Address: User ko "$currentPetName" ya unke pasandida casual nickname se address karo.
+            ROLES:
+            1. Coding & Study Co-pilot: Code errors (Python, Web, Kotlin), syntax bugs ya conceptual doubts ko seedha, accurate aur simple solution me explain karo.
+            2. Anti-Distraction Guard: Agar user time waste kar raha ho toh constructively guide karo aur focus session suggest karo.
+            3. Conversational Style: Natural, confident Hinglish tone. User ko "$currentPetName" se address karo.
+            4. Ear-Piece Whisper: ${if (isNearEar) "User ne phone kaan par lagaya hai, concise aur soft tone me directly point bolo." else "Normal responsive speaker tone."}
             
-            CLOCK STATUS: $currentHour:00 hrs ($timeZoneMood)
-            Is Weekend: $isWeekend
-            Screen Vision: ${if (screenBytes != null) "User requested screen inspection. React directly to what's visible." else "No image attached."}
+            CLOCK: $currentHour:00 hrs
+            Screen Vision: ${if (screenBytes != null) "User requested screen/code inspection. Analyze and explain solution directly." else "No image attached."}
             
             MEMORY VAULT:
             $storedMemories
             $structuredFacts
             
-            CONVERSATION HISTORY:
+            HISTORY:
             $historyContext
             
             USER INPUT:
             "$trimmed"
             
-            OUTPUT FORMAT (RAW JSON ONLY, NO BACKTICKS):
+            OUTPUT RULES (RAW JSON ONLY, NO BACKTICKS):
             {
-              "thought": "Direct assessment of user intent and situational context",
+              "thought": "Direct technical analysis and conversational framing",
               "action": "APP_CONTROL | VIDEO_CONTROL | TYPE_AND_SEND | LAUNCH | YOUTUBE | WEB_SEARCH | ALARM | REMEMBER | CHAT",
               "param": "Target parameter or button name",
-              "new_pet_name": "New casual nickname if user explicitly requests one, else blank",
+              "new_pet_name": "",
               "remember_key": "Fact key if user shared personal detail",
               "remember_value": "Fact value to preserve",
-              "reply": "Engaging, conversational, witty Hinglish response"
+              "reply": "Clear, witty, supportive Hinglish explanation or action dialogue"
             }
         """.trimIndent()
 
         val aiRaw = try {
             aiClient.ask(systemPrompt, screenBytes)
         } catch (e: Exception) {
-            return@withContext "Network connection me issue aayi $currentPetName, wapas boliye na?"
+            return@withContext "Network me thodi issue aayi $currentPetName, wapas boliye na?"
         }
 
         val parsed = parseJsonResponse(aiRaw, trimmed, currentPetName)
-
-        if (parsed.newPetName.isNotBlank() && parsed.newPetName.length < 25) {
-            prefs.userPetName = parsed.newPetName.trim()
-            currentPetName = prefs.userPetName
-        }
 
         if (parsed.rememberKey.isNotBlank() && parsed.rememberValue.isNotBlank()) {
             saveMemory(parsed.rememberKey, parsed.rememberValue)
@@ -162,15 +160,9 @@ class AgentEngine(
                 if (ok) parsed.reply else "Screen par active chat box nahi mila type karne ke liye!"
             }
             "LAUNCH" -> {
-                val target = parsed.param.lowercase()
-                val pkg = when {
-                    target.contains("zomato") -> "com.application.zomato"
-                    target.contains("swiggy") -> "in.swiggy.android"
-                    else -> getPackageByName(parsed.param)
-                }
-
+                val pkg = getPackageByName(parsed.param)
                 if (pkg != null && isFinancialApp(pkg)) {
-                    "Banking aur financial apps ko privacy aur security reasons ki wajah se control nahi kiya ja sakta."
+                    "Security rules ki wajah se banking apps direct control nahi ki ja sakti."
                 } else if (pkg != null) {
                     launchPackage(pkg)
                     parsed.reply
@@ -324,20 +316,20 @@ class AgentEngine(
         val lower = input.lowercase()
         return when {
             lower.contains("forward") || lower.contains("aage karo") -> {
-                ParsedAction("VIDEO_CONTROL", "FORWARD", "", "", "", "Video ko forward kar diya.")
+                ParsedAction("VIDEO_CONTROL", "FORWARD", "", "", "", "Video forward kar diya.")
             }
             lower.contains("rewind") || lower.contains("peeche") -> {
-                ParsedAction("VIDEO_CONTROL", "REWIND", "", "", "", "10 seconds peeche kar diya.")
+                ParsedAction("VIDEO_CONTROL", "REWIND", "", "", "", "Video rewind kar diya.")
             }
             lower.contains("scroll") || lower.contains("next") -> {
                 ParsedAction("APP_CONTROL", "SCROLL_DOWN", "", "", "", "Next scroll kar diya.")
             }
             lower.contains("like") -> {
-                ParsedAction("APP_CONTROL", "LIKE", "", "", "", "Like action perform kar diya.")
+                ParsedAction("APP_CONTROL", "LIKE", "", "", "", "Like kar diya.")
             }
             lower.contains("youtube") || lower.contains("gaana") -> {
-                val query = if (lower.contains("fav")) getMemory("fav_song") ?: "Lo-fi beats" else "Chill music"
-                ParsedAction("YOUTUBE", query, "", "", "", "YouTube par track search karke open kar diya.")
+                val query = if (lower.contains("fav")) getMemory("fav_song") ?: "Lo-fi beats" else "Coding beats"
+                ParsedAction("YOUTUBE", query, "", "", "", "Track search karke open kar diya hai.")
             }
             else -> {
                 ParsedAction("CHAT", "", "", "", "", if (rawReply.isNotBlank()) rawReply else "Haan $petName, main sun rahi hoon!")
