@@ -1,131 +1,82 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.agentforge.app">
 
-    <!-- Network -->
+    <!-- Network & Local Peer-to-Peer Telepathy Sync -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
-    <!-- Hardware & CameraX / Mic -->
-    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Microphone & Audio Hardware Routing -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Telephony -->
-    <uses-permission android:name="android.permission.READ_CONTACTS" />
-    <uses-permission android:name="android.permission.CALL_PHONE" />
-    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- Hardware Camera & Torch -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.flash"
+        android:required="false" />
 
-    <!-- Android 14/15 Strict Foreground Service Types -->
+    <!-- Ambient Sensors (Light, Motion, Proximity) -->
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
+
+    <!-- Overlay & Foreground Services -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
-    <!-- Termux IPC -->
-    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+    <!-- System Triggers & Alarms -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+    <!-- Storage Access for Code Extraction -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 
     <application
-        android:theme="@style/Theme.AgentForge"
-        android:label="@string/app_name"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher"
-        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AgentForge"
         android:usesCleartextTraffic="true"
-        android:supportsRtl="true">
+        tools:targetApi="35">
 
+        <!-- Main Dashboard & Setup Activity -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.AgentForge">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- Device Admin Receiver -->
-        <receiver
-            android:name=".security.AgentAdminReceiver"
-            android:permission="android.permission.BIND_DEVICE_ADMIN"
-            android:exported="true">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/device_admin_policies" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-            </intent-filter>
-        </receiver>
-
-        <receiver
-            android:name=".service.CallStateReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.PHONE_STATE" />
-            </intent-filter>
-        </receiver>
-
-        <receiver
-            android:name=".service.SpaceContextReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
-                <action android:name="android.net.wifi.STATE_CHANGE" />
-            </intent-filter>
-        </receiver>
-
-        <receiver
-            android:name=".service.RoutineAlarmReceiver"
-            android:exported="true" />
-
-        <receiver
-            android:name=".service.BatteryGuardianReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BATTERY_CHANGED" />
-            </intent-filter>
-        </receiver>
-
-        <service
-            android:name=".service.ScreenCaptureService"
-            android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
-
-        <service
-            android:name=".service.CallButlerService"
-            android:exported="false" />
-
-        <service
-            android:name=".service.CallVoicemailService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
-
-        <service
-            android:name=".service.VoiceListenerService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
-
-        <service
-            android:name=".service.SmartNotificationService"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
+        <!-- Core Accessibility Engine (Volume Key Intercept, System Gestures, Island Overlay) -->
         <service
             android:name=".service.AgentAccessibilityService"
-            android:exported="false"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:label="@string/app_name">
+            android:exported="true"
+            android:label="@string/accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
@@ -134,12 +85,38 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
+        <!-- Background Voice Recognition Service -->
+        <service
+            android:name=".service.VoiceListenerService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- Screen Vision & OCR Projection Service -->
+        <service
+            android:name=".service.ScreenCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- Headset Media Button Hook (Pocket Stealth Trigger) -->
+        <receiver
+            android:name=".receiver.HeadsetHookReceiver"
+            android:exported="true">
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Device Restart Receiver -->
+        <receiver
+            android:name=".receiver.BootReceiver"
             android:enabled="true"
-            android:exported="true"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
     </application>
+
 </manifest>

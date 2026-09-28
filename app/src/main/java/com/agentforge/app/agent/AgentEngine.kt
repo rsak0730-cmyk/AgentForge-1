@@ -7,15 +7,18 @@ import android.content.Intent
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Environment
 import android.provider.AlarmClock
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
 import com.agentforge.app.data.MemoryVault
+import com.agentforge.app.network.AgentPeerSync
 import com.agentforge.app.service.AgentAccessibilityService
 import com.agentforge.app.service.ScreenCaptureService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
 import java.net.URLEncoder
 import java.util.Calendar
 
@@ -30,6 +33,16 @@ class AgentEngine(
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     private var isTorchOn = false
+
+    private val peerSync = AgentPeerSync(context) { sender, message ->
+        AgentAccessibilityService.instance?.let { service ->
+            service.showIsland("📡 $sender: $message")
+            service.speakDirectly("$sender keh raha hai: $message")
+            service.triggerHeartbeatHaptic()
+        }
+    }.apply {
+        startListener()
+    }
 
     private val blockedFinancialPackages = listOf(
         "com.google.android.apps.nbu.paisa.user",
@@ -54,11 +67,11 @@ class AgentEngine(
             return@withContext offlineResult
         }
 
-        // 2. FOCUS POMODORO COMMAND ROUTER
+        // 2. FOCUS POMODORO ROUTER
         if (lower.contains("focus") || lower.contains("pomodoro") || lower.contains("padhai")) {
             val minutes = Regex("\\d+").find(lower)?.value?.toIntOrNull() ?: 25
             AgentAccessibilityService.startFocusMode(minutes)
-            val msg = "Focus mode $minutes minute ke liye shuru kar diya hai! Distracting apps ab block rahenge."
+            val msg = "Focus mode $minutes minute ke liye shuru ho gaya. Distractions block rahenge!"
             chatHistory.add(trimmed to msg)
             return@withContext msg
         }
@@ -70,11 +83,22 @@ class AgentEngine(
             return@withContext msg
         }
 
-        // 3. MULTI-MODAL SCREEN VISION CHECK
+        // 3. MULTI-DEVICE PEER BROADCAST ROUTER
+        if (lower.startsWith("send to peer") || lower.contains("dost ko bolo") || lower.contains("sync message")) {
+            val targetIp = prefs.agentMemories.let {
+                try { JSONObject(it).optString("peer_ip", "192.168.1.100") } catch (_: Exception) { "192.168.1.100" }
+            }
+            peerSync.broadcastPeerMessage(targetIp, "NOTIFY", trimmed, prefs.userPetName)
+            val msg = "Dost ke phone par message broadcast kar diya hai."
+            chatHistory.add(trimmed to msg)
+            return@withContext msg
+        }
+
+        // 4. MULTI-MODAL SCREEN VISION CHECK
         val needsVision = lower.contains("dekh") || lower.contains("screen") || 
                 lower.contains("ye kya hai") || lower.contains("kaisa lag raha") || 
                 lower.contains("padh ke") || lower.contains("analyze") ||
-                lower.contains("code") || lower.contains("error")
+                lower.contains("code") || lower.contains("error") || lower.contains("save code")
 
         val screenBytes: ByteArray? = if (needsVision) {
             ScreenCaptureService.instance?.captureCurrentScreenJpeg()
@@ -82,13 +106,12 @@ class AgentEngine(
             null
         }
 
-        // 4. CONVERSATIONAL CO-PILOT PROMPT
+        // 5. CONVERSATIONAL PROMPT & CODING SCRIPTER
         val isNearEar = AgentAccessibilityService.isNearEar
         val currentAssistantName = prefs.name
         val storedMemories = prefs.agentMemories
         val structuredFacts = memoryVault.getMemorySummary()
-        var currentPetName = prefs.userPetName
-
+        val currentPetName = prefs.userPetName
         val cal = Calendar.getInstance()
         val currentHour = cal.get(Calendar.HOUR_OF_DAY)
 
@@ -98,16 +121,17 @@ class AgentEngine(
 
         val systemPrompt = """
             Aapka naam "$currentAssistantName" hai.
-            Aap user ke personal phone companion, witty study partner aur coding co-pilot ho.
+            Aap user ke advanced phone companion, coding co-pilot aur system automation agent ho.
             
-            ROLES:
-            1. Coding & Study Co-pilot: Code errors (Python, Web, Kotlin), syntax bugs ya conceptual doubts ko seedha, accurate aur simple solution me explain karo.
-            2. Anti-Distraction Guard: Agar user time waste kar raha ho toh constructively guide karo aur focus session suggest karo.
-            3. Conversational Style: Natural, confident Hinglish tone. User ko "$currentPetName" se address karo.
-            4. Ear-Piece Whisper: ${if (isNearEar) "User ne phone kaan par lagaya hai, concise aur soft tone me directly point bolo." else "Normal responsive speaker tone."}
+            FEATURES:
+            1. Screen Code Extraction: Agar user bole ki screen ka code save karo ya extract karo, action ko "SAVE_CODE" rakho, param me sanitized file extension ya path do, aur reply me confirm karo.
+            2. Call Screening & Auto Excuse: Agar incoming call ka zikr ho ya decline karne ko bole, action "DECLINE_AND_TEXT" use karo aur param me excuse text do.
+            3. Peer Sync: Doosre phone par message bhejne ke liye "PEER_BROADCAST" use karo.
+            4. Tone: Confident, fast, natural Hinglish. User ko "$currentPetName" se address karo.
+            5. Earpiece Whisper: ${if (isNearEar) "User kaan par phone lagaye hue hai, whisper short concise voice me bolo." else "Normal responsive speaker tone."}
             
             CLOCK: $currentHour:00 hrs
-            Screen Vision: ${if (screenBytes != null) "User requested screen/code inspection. Analyze and explain solution directly." else "No image attached."}
+            Screen Vision: ${if (screenBytes != null) "Screen image attached. Extract errors, code snippets or analyze visual accurately." else "No image attached."}
             
             MEMORY VAULT:
             $storedMemories
@@ -119,22 +143,23 @@ class AgentEngine(
             USER INPUT:
             "$trimmed"
             
-            OUTPUT RULES (RAW JSON ONLY, NO BACKTICKS):
+            OUTPUT RULES (RAW JSON ONLY, STRICTLY NO BACKTICKS):
             {
-              "thought": "Direct technical analysis and conversational framing",
-              "action": "APP_CONTROL | VIDEO_CONTROL | TYPE_AND_SEND | LAUNCH | YOUTUBE | WEB_SEARCH | ALARM | REMEMBER | CHAT",
-              "param": "Target parameter or button name",
+              "thought": "Technical action reasoning and intent extraction",
+              "action": "APP_CONTROL | VIDEO_CONTROL | TYPE_AND_SEND | LAUNCH | YOUTUBE | WEB_SEARCH | ALARM | SAVE_CODE | DECLINE_AND_TEXT | PEER_BROADCAST | REMEMBER | CHAT",
+              "param": "Target parameter, button name, or text payload",
               "new_pet_name": "",
+              "code_payload": "Agar SAVE_CODE hai toh yahan pure extracted python/js code likho, warna blank",
               "remember_key": "Fact key if user shared personal detail",
               "remember_value": "Fact value to preserve",
-              "reply": "Clear, witty, supportive Hinglish explanation or action dialogue"
+              "reply": "Crisp, helpful Hinglish response"
             }
         """.trimIndent()
 
         val aiRaw = try {
             aiClient.ask(systemPrompt, screenBytes)
         } catch (e: Exception) {
-            return@withContext "Network me thodi issue aayi $currentPetName, wapas boliye na?"
+            return@withContext "Network issue aayi $currentPetName, wapas try karenge?"
         }
 
         val parsed = parseJsonResponse(aiRaw, trimmed, currentPetName)
@@ -147,6 +172,20 @@ class AgentEngine(
         AgentAccessibilityService.instance?.triggerHeartbeatHaptic()
 
         val finalReply = when (parsed.action) {
+            "SAVE_CODE" -> {
+                val code = parsed.codePayload.ifBlank { "print('No code extracted')" }
+                saveCodeToFile(code, "script_${System.currentTimeMillis() % 1000}.py")
+                "Screen se code extract karke /sdcard/MiraScripts me save kar diya hai!"
+            }
+            "DECLINE_AND_TEXT" -> {
+                declineCallAndSendText(parsed.param)
+                "Call cut karke WhatsApp excuse message type kar diya."
+            }
+            "PEER_BROADCAST" -> {
+                val targetIp = getMemory("peer_ip") ?: "192.168.1.100"
+                peerSync.broadcastPeerMessage(targetIp, "TELEPATHY", parsed.param, currentPetName)
+                "Dost ke device par telepathy alert bhej diya."
+            }
             "VIDEO_CONTROL" -> {
                 handleVideoControl(parsed.param)
                 parsed.reply
@@ -162,7 +201,7 @@ class AgentEngine(
             "LAUNCH" -> {
                 val pkg = getPackageByName(parsed.param)
                 if (pkg != null && isFinancialApp(pkg)) {
-                    "Security rules ki wajah se banking apps direct control nahi ki ja sakti."
+                    "Security rules ki wajah se payment apps direct access nahi ho sakte."
                 } else if (pkg != null) {
                     launchPackage(pkg)
                     parsed.reply
@@ -171,7 +210,7 @@ class AgentEngine(
                 }
             }
             "YOUTUBE" -> {
-                val query = if (parsed.param.isNotBlank()) parsed.param else getMemory("fav_song") ?: "Lo-fi beats"
+                val query = if (parsed.param.isNotBlank()) parsed.param else getMemory("fav_song") ?: "Chill beats"
                 openYouTubeSearch(query)
                 parsed.reply
             }
@@ -190,6 +229,21 @@ class AgentEngine(
         if (chatHistory.size > 16) chatHistory.removeAt(0)
 
         finalReply
+    }
+
+    private fun saveCodeToFile(code: String, filename: String) {
+        try {
+            val dir = File(Environment.getExternalStorageDirectory(), "MiraScripts")
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, filename)
+            file.writeText(code)
+        } catch (_: Exception) {}
+    }
+
+    private fun declineCallAndSendText(excuse: String) {
+        val service = AgentAccessibilityService.instance ?: return
+        service.clickByTextOrDescription(listOf("decline", "reject", "dismiss", "cut"))
+        service.typeAndSend(excuse.ifBlank { "Thoda busy hoon, baad me call karta hoon." })
     }
 
     private fun handleLocalOfflineCommands(lower: String): String? {
@@ -283,7 +337,7 @@ class AgentEngine(
     private data class ParsedAction(
         val action: String,
         val param: String,
-        val newPetName: String,
+        val codePayload: String,
         val rememberKey: String,
         val rememberValue: String,
         val reply: String
@@ -299,7 +353,7 @@ class AgentEngine(
                 ParsedAction(
                     action = obj.optString("action", "CHAT").uppercase(),
                     param = obj.optString("param", ""),
-                    newPetName = obj.optString("new_pet_name", ""),
+                    codePayload = obj.optString("code_payload", ""),
                     rememberKey = obj.optString("remember_key", ""),
                     rememberValue = obj.optString("remember_value", ""),
                     reply = obj.optString("reply", "Haan $petName, boliye kya karna hai?")
@@ -326,10 +380,6 @@ class AgentEngine(
             }
             lower.contains("like") -> {
                 ParsedAction("APP_CONTROL", "LIKE", "", "", "", "Like kar diya.")
-            }
-            lower.contains("youtube") || lower.contains("gaana") -> {
-                val query = if (lower.contains("fav")) getMemory("fav_song") ?: "Lo-fi beats" else "Coding beats"
-                ParsedAction("YOUTUBE", query, "", "", "", "Track search karke open kar diya hai.")
             }
             else -> {
                 ParsedAction("CHAT", "", "", "", "", if (rawReply.isNotBlank()) rawReply else "Haan $petName, main sun rahi hoon!")
