@@ -29,10 +29,9 @@ class AgentEngine(
         }
 
         val systemPrompt = """
-            Aap ek smart, obedient aur helpful Android OS companion ho.
-            Aapka naam "$currentAssistantName" hai (User aapko "$currentAssistantName" ya Jarvis ya Mira kisi bhi naam se bula sakta hai, kabhi bhi naam par behes mat karna, hamesha sweetly accept karna).
+            Aap ek fast, intelligent Android OS companion ho.
+            Aapka naam "$currentAssistantName" hai. (User agar "$currentAssistantName", Jarvis ya Mira bole, politely accept karo).
             Wake-word: "$currentWakeWord"
-            
             User ka naam Manish hai.
             
             Permanently Stored Facts/Memories:
@@ -43,37 +42,43 @@ class AgentEngine(
             
             User Input: "$trimmedInput"
             
-            RULES FOR OUTPUT:
-            Hamesha sirf valid JSON object me reply do:
-            {
-              "thought": "Short explanation",
-              "action": "YOUTUBE | LAUNCH | REMEMBER | SHELL | CHAT",
-              "param": "Target parameter ya search query (agar user 'mera fav gaana' bole toh memories/history se exact song resolve karo)",
-              "remember_key": "Fact key agar user kuch yaad rakhne bole (warna empty)",
-              "remember_value": "Fact value agar user kuch yaad rakhne bole (warna empty)",
-              "reply": "Sweet, helpful Hinglish reply without any identity conflict"
-            }
+            CRITICAL INSTRUCTION:
+            - Agar user bole "mera fav gaana" aur memory me "Arz kya hai" ya koi song save ho, toh YouTube search me wahi song parameter me bhejo.
+            - Agar user bole "achha sa gaana jisse fresh lage" ya koi mood bataye, toh parameter me relevant search terms (jaise "fresh feel good songs hindi") generate karo.
+            - Agar user koi fact bataye ya kahe "ise yaad rakhna", toh action "REMEMBER" select karo.
+            - KABHI BHI bina soche "Haan boliye, main ready hoon" mat bolna.
             
-            Identity Examples:
-            User: hey jarvis / hey mira
-            Output: {"thought":"Greeting acknowledgment","action":"CHAT","param":"","remember_key":"","remember_value":"","reply":"Haan Manish, boliye! Main aapki kya madad kar sakti hoon?"}
+            RESPONSE FORMAT (Strictly ONLY valid JSON, no markdown backticks):
+            {
+              "thought": "Reasoning",
+              "action": "YOUTUBE | LAUNCH | REMEMBER | SHELL | CHAT",
+              "param": "Target parameter ya search query (e.g. Arz kya hai / fresh songs / app name)",
+              "remember_key": "Fact key agar yaad rakhna ho warna empty",
+              "remember_value": "Fact value agar yaad rakhna ho warna empty",
+              "reply": "Warm natural Hinglish response for Manish"
+            }
         """.trimIndent()
 
         val aiRawResponse = try {
             aiClient.ask(systemPrompt)
         } catch (e: Exception) {
-            return@withContext "Network issue: ${e.message}"
+            "Network error: ${e.message}"
         }
 
-        val parsed = parseJsonResponse(aiRawResponse)
+        val parsed = parseJsonResponse(aiRawResponse, trimmedInput)
 
+        // Save memories permanently
         if (parsed.rememberKey.isNotBlank() && parsed.rememberValue.isNotBlank()) {
             saveMemory(parsed.rememberKey, parsed.rememberValue)
         }
 
         val finalReply = when (parsed.action) {
             "YOUTUBE" -> {
-                val query = if (parsed.param.isNotBlank()) parsed.param else getMemory("fav_song") ?: "Hindi song"
+                val query = when {
+                    parsed.param.isNotBlank() -> parsed.param
+                    trimmedInput.contains("fav", ignoreCase = true) -> getMemory("fav_song") ?: "Arz kya hai"
+                    else -> "fresh energetic songs"
+                }
                 val ok = openYouTubeSearch(query)
                 if (ok) parsed.reply else "YouTube open nahi ho paya."
             }
@@ -106,7 +111,7 @@ class AgentEngine(
         val reply: String
     )
 
-    private fun parseJsonResponse(raw: String): ParsedAction {
+    private fun parseJsonResponse(raw: String, originalInput: String): ParsedAction {
         return try {
             val jsonStart = raw.indexOf("{")
             val jsonEnd = raw.lastIndexOf("}")
@@ -118,13 +123,30 @@ class AgentEngine(
                     param = obj.optString("param", ""),
                     rememberKey = obj.optString("remember_key", ""),
                     rememberValue = obj.optString("remember_value", ""),
-                    reply = obj.optString("reply", "Haan boliye, main ready hoon.")
+                    reply = obj.optString("reply", "Theek hai Manish, process kar rahi hoon.")
                 )
             } else {
-                ParsedAction("CHAT", "", "", "", raw)
+                // If AI returned raw text instead of JSON
+                fallbackActionDeducer(raw, originalInput)
             }
         } catch (_: Exception) {
-            ParsedAction("CHAT", "", "", "", raw)
+            fallbackActionDeducer(raw, originalInput)
+        }
+    }
+
+    private fun fallbackActionDeducer(rawReply: String, input: String): ParsedAction {
+        val lower = input.lowercase()
+        return when {
+            lower.contains("youtube") && (lower.contains("gaana") || lower.contains("song") || lower.contains("play") || lower.contains("chala")) -> {
+                val query = if (lower.contains("fav")) getMemory("fav_song") ?: "Arz kya hai" else "fresh energetic songs"
+                ParsedAction("YOUTUBE", query, "", "", "YouTube par gaana chala rahi hoon.")
+            }
+            rawReply.isNotBlank() && !rawReply.contains("ready hoon") -> {
+                ParsedAction("CHAT", "", "", "", rawReply)
+            }
+            else -> {
+                ParsedAction("CHAT", "", "", "", "Haan Manish, boliye main kya karoon?")
+            }
         }
     }
 
