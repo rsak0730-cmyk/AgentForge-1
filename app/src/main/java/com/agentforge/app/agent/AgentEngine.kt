@@ -16,62 +16,62 @@ class AgentEngine(
     private val shizuku: ShizukuBridge
 ) {
     private val prefs = AppPrefs(context)
-    private val chatHistory = mutableListOf<Pair<String, String>>() // Memory buffer (User, Assistant)
+    private val chatHistory = mutableListOf<Pair<String, String>>()
 
     suspend fun execute(userInput: String): String = withContext(Dispatchers.IO) {
         val trimmedInput = userInput.trim()
+        val currentAssistantName = prefs.name
+        val currentWakeWord = prefs.wakeWord
 
-        // 1. Long-Term Memory (Permanent facts storage)
-        val storedMemories = prefs.agentMemories // Key-value JSON string of remembered facts
+        val storedMemories = prefs.agentMemories
         val historyContext = chatHistory.takeLast(6).joinToString("\n") { 
-            "User: ${it.first}\nAssistant: ${it.second}" 
+            "User: ${it.first}\n$currentAssistantName: ${it.second}" 
         }
 
-        // 2. Strict Brain Prompt with Memory Injection
         val systemPrompt = """
-            Aap Mira ho, Manish ke personal Android OS companion aur Jarvis-style agent.
+            Aap ek smart, obedient aur helpful Android OS companion ho.
+            Aapka naam "$currentAssistantName" hai (User aapko "$currentAssistantName" ya Jarvis ya Mira kisi bhi naam se bula sakta hai, kabhi bhi naam par behes mat karna, hamesha sweetly accept karna).
+            Wake-word: "$currentWakeWord"
             
-            Permanently Remembered Facts about Manish:
+            User ka naam Manish hai.
+            
+            Permanently Stored Facts/Memories:
             $storedMemories
             
-            Recent Conversation History:
+            Recent Chat History:
             $historyContext
             
-            Current User Input: "$trimmedInput"
+            User Input: "$trimmedInput"
             
             RULES FOR OUTPUT:
             Hamesha sirf valid JSON object me reply do:
             {
-              "thought": "Short explanation of intent",
+              "thought": "Short explanation",
               "action": "YOUTUBE | LAUNCH | REMEMBER | SHELL | CHAT",
-              "param": "Target parameter ya search query (agar user 'mera fav gaana' bole toh stored memories ya context se resolve karke actual song name likho)",
+              "param": "Target parameter ya search query (agar user 'mera fav gaana' bole toh memories/history se exact song resolve karo)",
               "remember_key": "Fact key agar user kuch yaad rakhne bole (warna empty)",
               "remember_value": "Fact value agar user kuch yaad rakhne bole (warna empty)",
-              "reply": "Natural Hinglish reply Manish ke liye"
+              "reply": "Sweet, helpful Hinglish reply without any identity conflict"
             }
             
-            Examples:
-            1. User: mera fav gaana "Arz kya hai" ab ise yaad rakhna
-               Output: {"thought":"Storing favorite song","action":"REMEMBER","param":"Arz kya hai","remember_key":"fav_song","remember_value":"Arz kya hai","reply":"Theek hai Manish, maine yaad rakh liya ki aapka favourite gaana 'Arz kya hai' hai."}
-            2. User: mera fav gaana lagao youtube pe
-               Output: {"thought":"Playing favorite song from memory","action":"YOUTUBE","param":"Arz kya hai","remember_key":"","remember_value":"","reply":"Aapka favourite gaana 'Arz kya hai' YouTube par play kar rahi hoon."}
+            Identity Examples:
+            User: hey jarvis / hey mira
+            Output: {"thought":"Greeting acknowledgment","action":"CHAT","param":"","remember_key":"","remember_value":"","reply":"Haan Manish, boliye! Main aapki kya madad kar sakti hoon?"}
         """.trimIndent()
 
         val aiRawResponse = try {
             aiClient.ask(systemPrompt)
         } catch (e: Exception) {
-            return@withContext "Internet ya API connection me problem aayi: ${e.message}"
+            return@withContext "Network issue: ${e.message}"
         }
 
         val parsed = parseJsonResponse(aiRawResponse)
-        
-        // Handle Permanent Fact Storage
+
         if (parsed.rememberKey.isNotBlank() && parsed.rememberValue.isNotBlank()) {
             saveMemory(parsed.rememberKey, parsed.rememberValue)
         }
 
-        // Execute OS Actions
-        val executionResult = when (parsed.action) {
+        val finalReply = when (parsed.action) {
             "YOUTUBE" -> {
                 val query = if (parsed.param.isNotBlank()) parsed.param else getMemory("fav_song") ?: "Hindi song"
                 val ok = openYouTubeSearch(query)
@@ -86,17 +86,16 @@ class AgentEngine(
                     shizuku.executeCommand(parsed.param)
                     parsed.reply
                 } else {
-                    "${parsed.reply} (Lekin Shizuku offline hai)"
+                    "${parsed.reply} (Shizuku offline hai)"
                 }
             }
             else -> parsed.reply
         }
 
-        // Save to active short-term session memory
-        chatHistory.add(trimmedInput to executionResult)
+        chatHistory.add(trimmedInput to finalReply)
         if (chatHistory.size > 12) chatHistory.removeAt(0)
 
-        executionResult
+        finalReply
     }
 
     private data class ParsedAction(
@@ -119,7 +118,7 @@ class AgentEngine(
                     param = obj.optString("param", ""),
                     rememberKey = obj.optString("remember_key", ""),
                     rememberValue = obj.optString("remember_value", ""),
-                    reply = obj.optString("reply", "Done")
+                    reply = obj.optString("reply", "Haan boliye, main ready hoon.")
                 )
             } else {
                 ParsedAction("CHAT", "", "", "", raw)

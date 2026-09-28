@@ -329,12 +329,17 @@ fun FluidGlowOrb(isActive: Boolean) {
 private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
     val context = LocalContext.current
     var input by remember { mutableStateOf("") }
-    var messages by remember { mutableStateOf(listOf("${prefs.name}: Cyber & Fluid Orb Core ready. Command boliye.")) }
+    var currentName by remember { mutableStateOf(prefs.name) }
+    var messages by remember { mutableStateOf(listOf("$currentName: Cyber & Fluid Orb Core ready. Command boliye.")) }
     var busy by remember { mutableStateOf(false) }
     var isListeningVoice by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val engine = remember { AgentEngine(context, AiClient(prefs), shizuku) }
+
+    LaunchedEffect(prefs.name) {
+        currentName = prefs.name
+    }
 
     val google4Colors = listOf(
         Color(0xFF4285F4),
@@ -356,7 +361,7 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                ShimmerNeonText(prefs.name, size = 20)
+                ShimmerNeonText(currentName, size = 20)
                 Text(
                     text = "@edit.og_",
                     color = NeonBlueAccent,
@@ -463,7 +468,7 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                             scope.launch {
                                 listState.animateScrollToItem(messages.size - 1)
                                 val res = engine.execute(cmd)
-                                messages = messages + "${prefs.name}: $res"
+                                messages = messages + "$currentName: $res"
                                 busy = false
                                 listState.animateScrollToItem(messages.size - 1)
                             }
@@ -814,7 +819,6 @@ private fun SliderItem(label: String, value: Float, min: Float, max: Float, onVa
     }
 }
 
-// ---------------- SINGLE-LOCK CALIBRATION (NO OVERWRITE BUG) ----------------
 @Composable
 fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -919,7 +923,6 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
     )
 }
 
-// ---------------- ZERO-UI STEALTH UNLOCK (NO 1PX SURFACE BUG) ----------------
 @Composable
 fun StealthFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -951,7 +954,6 @@ fun StealthFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     LaunchedEffect(Unit) {
         AgentAccessibilityService.instance?.showIsland("⟳ Scanning Face...")
 
-        // Android 15 Invisible Background Pipeline: No Preview Surface Needed
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
