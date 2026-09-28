@@ -16,6 +16,7 @@ import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.MemoryVault
 import com.agentforge.app.service.AgentAccessibilityService
 import com.agentforge.app.service.RoutineAlarmReceiver
+import com.agentforge.app.service.ScreenCaptureService
 import com.agentforge.app.service.SmartNotificationService
 import kotlinx.coroutines.delay
 import org.json.JSONArray
@@ -37,18 +38,18 @@ class AgentEngine(
         val trimmed = userQuery.trim()
         if (trimmed.isEmpty() && capturedImageBytes == null) return "Boliye, sun rahi hoon."
 
-        // Direct Intercom voice commands
-        if (trimmed.contains("call utha lo", ignoreCase = true) || trimmed.contains("receive call", ignoreCase = true) || trimmed.contains("answer call", ignoreCase = true)) {
-            val ok = callManager.acceptIncomingCall()
-            return if (ok) "Call connect kar di hai speaker par." else "Call answer nahi ho paayi."
-        }
-        if (trimmed.contains("call kaat do", ignoreCase = true) || trimmed.contains("reject call", ignoreCase = true)) {
-            val ok = callManager.rejectIncomingCall()
-            return if (ok) "Call reject kar di." else "Call reject nahi ho paayi."
+        // 1. ZERO-LATENCY 50ms LOCAL INTENT DISPATCHER
+        val localFastResult = handleFastLocalActions(trimmed)
+        if (localFastResult != null) {
+            conversationHistory.add("User: $trimmed")
+            conversationHistory.add("Mira: $localFastResult")
+            return localFastResult
         }
 
-        if (trimmed.contains("cancel everything red", ignoreCase = true) || trimmed.contains("code black emergency", ignoreCase = true)) {
-            return triggerPanicDuressMode()
+        // 2. NATIVE SCREEN FRAME CAPTURE FALLBACK (Diagrams / Canvas)
+        var visualBytes = capturedImageBytes
+        if (visualBytes == null && (trimmed.contains("screen", ignoreCase = true) || trimmed.contains("solve", ignoreCase = true) || trimmed.contains("dekh", ignoreCase = true))) {
+            visualBytes = ScreenCaptureService.instance?.captureCurrentScreenJpeg()
         }
 
         memory.incrementInteraction()
@@ -62,25 +63,24 @@ class AgentEngine(
 
         val screenHierarchy = service?.getIndexedScreenElements() ?: "Screen unavailable"
         val knownMemory = memory.getMemorySummary()
-
-        // Dynamic Dialect & Slang Detection
         val dialect = DialectAdapter.detectDialect(trimmed)
 
         val prompt = """
-You are Mira, an autonomous and intelligent Android OS companion.
+You are Mira, an autonomous, witty, and hyper-capable personal OS companion.
+Outperform Siri and Bixby in proactiveness, screen comprehension, and street-smart relatable dialogue.
 ${dialect.systemPromptInstructions}
 
-User Memory Context:
+Known Facts & Memories:
 $knownMemory
 
-Current Visible Screen Hierarchy:
+On-Screen Hierarchy & Layout:
 $screenHierarchy
 
-Recent Conversation History:
+Recent Conversation Context:
 ${conversationHistory.takeLast(4).joinToString("\n")}
 
-SUPPORTED ACTIONS:
-- "solve_study_problem": (Analyze current screen questions/notes, parse problem, and explain solution concisely with steps/formulas)
+CAPABILITIES & ACTIONS:
+- "solve_study_problem": (Analyze visible screen questions/diagrams and explain concisely)
 - "accept_call", "reject_call"
 - "save_screen_notes", "react_story", "identify_music", "whatsapp_meme"
 - "morning_briefing", "bedtime_routine", "macro_pipeline"
@@ -89,17 +89,17 @@ SUPPORTED ACTIONS:
 - "whatsapp_send", "telegram_send", "notification_reply", "schedule_routine"
 - "conversational_reply"
 
-Output STRICT JSON ONLY:
+Return STRICT JSON ONLY:
 {
   "action": "solve_study_problem"|"accept_call"|"reject_call"|"save_screen_notes"|"react_story"|"identify_music"|"whatsapp_meme"|"morning_briefing"|"bedtime_routine"|"macro_pipeline"|"summarize_screen"|"remember_fact"|"open_app"|"home"|"back"|"recents"|"play_pause"|"toggle_torch"|"volume_up"|"volume_down"|"call"|"whatsapp_send"|"telegram_send"|"notification_reply"|"schedule_routine"|"conversational_reply",
   "param": "target/app/fact",
   "text": "content",
   "id": 0,
-  "reply": "voice response strictly formatted in the user's dialect (Bangla/Hinglish/English)"
+  "reply": "voice response strictly formatted in the user's dialect"
 }
         """.trimIndent()
 
-        val rawAi = ai.ask("$prompt\n\nUser: \"$trimmed\"", capturedImageBytes)
+        val rawAi = ai.ask("$prompt\n\nUser: \"$trimmed\"", visualBytes)
         val cleanJson = rawAi.replace("```json", "").replace("```", "").trim()
 
         var feedback = ""
@@ -127,7 +127,7 @@ Output STRICT JSON ONLY:
                 "save_screen_notes" -> feedback = service?.saveVisibleTextToNotes() ?: "Accessibility not ready."
                 "react_story" -> feedback = reactToVisibleStory(text, replyMsg)
                 "identify_music" -> {
-                    feedback = replyMsg.ifBlank { "Music listen kar rahi hoon..." }
+                    feedback = replyMsg.ifBlank { "Listening to ambient track..." }
                     service?.showIsland("Listening...", isMusicPlaying = true)
                 }
                 "whatsapp_meme" -> feedback = sendMemeStickerReply("com.whatsapp", param, text)
@@ -162,7 +162,7 @@ Output STRICT JSON ONLY:
                 "toggle_torch" -> { toggleTorch(); feedback = replyMsg.ifBlank { "Flashlight toggled." } }
                 "volume_up" -> { adjustVolume(true); feedback = replyMsg.ifBlank { "Volume badha diya." } }
                 "volume_down" -> { adjustVolume(false); feedback = replyMsg.ifBlank { "Volume kam kar diya." } }
-                "call" -> { autoCall(param); feedback = replyMsg.ifBlank { "$param ko call mila rahi hoon." } }
+                "call" -> { autoCall(param); feedback = replyMsg.ifBlank { "$param ko call connect kar rahi hoon." } }
                 "summarize_screen" -> feedback = replyMsg.ifBlank { "Screen summary: ${screenHierarchy.take(220)}" }
                 "remember_fact" -> { memory.saveFact(param); feedback = replyMsg.ifBlank { "Yaad rakhungi!" } }
                 "conversational_reply" -> feedback = replyMsg.ifBlank { rawAi }
@@ -176,6 +176,54 @@ Output STRICT JSON ONLY:
         conversationHistory.add("Mira: $feedback")
         service?.showIsland("Ready")
         return feedback
+    }
+
+    private fun handleFastLocalActions(cmd: String): String? {
+        val lower = cmd.lowercase()
+
+        if (lower.contains("call utha lo") || lower.contains("receive call") || lower.contains("answer call")) {
+            val ok = callManager.acceptIncomingCall()
+            return if (ok) "Call connect kar di hai speaker par." else "Call answer nahi ho paayi."
+        }
+        if (lower.contains("call kaat do") || lower.contains("reject call")) {
+            val ok = callManager.rejectIncomingCall()
+            return if (ok) "Call decline kar di." else "Call decline nahi ho paayi."
+        }
+        if (lower.contains("cancel everything red") || lower.contains("code black emergency")) {
+            return triggerPanicDuressMode()
+        }
+        if (lower.contains("torch") || lower.contains("flashlight") || lower.contains("light on") || lower.contains("light off")) {
+            toggleTorch()
+            return "Flashlight status badal diya."
+        }
+        if (lower == "home" || lower == "home screen" || lower == "go home") {
+            shizuku.run("home")
+            return "Home screen."
+        }
+        if (lower == "back" || lower == "go back" || lower == "peeche jao") {
+            shizuku.run("back")
+            return "Peeche aa gaye."
+        }
+        if (lower == "recent" || lower == "recents" || lower == "recent apps") {
+            shizuku.run("recent")
+            return "Recent apps khol di."
+        }
+        if (lower.contains("volume") && (lower.contains("badhao") || lower.contains("up"))) {
+            adjustVolume(true)
+            return "Volume badha diya."
+        }
+        if (lower.contains("volume") && (lower.contains("kam") || lower.contains("down"))) {
+            adjustVolume(false)
+            return "Volume kam kar diya."
+        }
+        if (lower.startsWith("open ") || lower.startsWith("kholo ")) {
+            val app = cmd.substringAfter(" ").trim()
+            if (app.isNotEmpty() && app.length < 25) {
+                openApp(app)
+                return "$app open kar diya."
+            }
+        }
+        return null
     }
 
     private suspend fun reactToVisibleStory(suggestedReaction: String, voiceReply: String): String {
@@ -253,19 +301,9 @@ Output STRICT JSON ONLY:
     }
 
     private fun executeOfflineFallback(cmd: String): String {
-        val lower = cmd.lowercase()
-        return when {
-            lower.contains("torch") || lower.contains("light") -> { toggleTorch(); "Torch toggled." }
-            lower.contains("home") -> { shizuku.run("home"); "Home." }
-            lower.contains("back") -> { shizuku.run("back"); "Back." }
-            lower.contains("pause") || lower.contains("play") -> { shizuku.run("play_pause"); "Playback toggled." }
-            lower.contains("open") || lower.contains("kholo") -> {
-                val app = cmd.substringAfter("open").substringAfter("kholo").trim()
-                openApp(app)
-                "$app open kar diya."
-            }
-            else -> "Offline fallback ready."
-        }
+        val fast = handleFastLocalActions(cmd)
+        if (fast != null) return fast
+        return "Offline fallback active hai."
     }
 
     private suspend fun sendInstantMessengerMessage(packageName: String, contact: String, message: String): String {

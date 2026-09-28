@@ -10,7 +10,10 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
@@ -27,6 +30,7 @@ import androidx.core.app.NotificationCompat
 import com.agentforge.app.agent.AgentEngine
 import com.agentforge.app.agent.AiClient
 import com.agentforge.app.agent.DialectAdapter
+import com.agentforge.app.automation.AppWhitelistHelper
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
 import com.agentforge.app.security.VoiceprintManager
@@ -35,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -48,6 +53,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
     private lateinit var engine: AgentEngine
     private lateinit var voiceprintManager: VoiceprintManager
     private lateinit var sensorManager: SensorManager
+    private lateinit var whitelistHelper: AppWhitelistHelper
 
     private var proximitySensor: Sensor? = null
     private var isPhoneInPocket = false
@@ -56,8 +62,12 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
     private var tts: TextToSpeech? = null
     private var toneGenerator: ToneGenerator? = null
 
+    // Dual-Stage Passive VAD Audio Thread
+    private var passiveAudioRecord: AudioRecord? = null
     @Volatile
-    private var isEngineBusy = false
+    private var isPassiveListening = false
+    @Volatile
+    private var isSpeaking = false
     @Volatile
     private var isListeningNow = false
     private var isAwaitingDirectCommand = false
@@ -68,10 +78,13 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
         shizuku = ShizukuBridge(this)
         engine = AgentEngine(this, AiClient(prefs), shizuku)
         voiceprintManager = VoiceprintManager(this)
+        whitelistHelper = AppWhitelistHelper(this, shizuku)
         tts = TextToSpeech(this, this)
         toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85)
 
-        // Pocket / Proximity Guard Setup
+        // Kill-Guard: Whitelist background execution on Samsung One UI / Android
+        whitelistHelper.ensureBackgroundSurvival()
+
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
         proximitySensor?.let {
@@ -82,7 +95,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
         updateServiceNotification(if (prefs.isSleeping) "Sleeping (Mic OFF)" else "Active • '${prefs.wakeWord}'")
 
         if (!prefs.isSleeping) {
-            initRecognizerAndStart()
+            startPassiveEnergyListening()
         }
     }
 
@@ -107,28 +120,75 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
         startForeground(101, notification)
     }
 
-    // ---------------- PROXIMITY & POCKET GUARD ----------------
+    // ---------------- STAGE 1: LOW-POWER PASSIVE VAD LISTENER ----------------
+    private fun startPassiveEnergyListening() {
+        if (isPassiveListening || prefs.isSleeping || isPhoneInPocket) return
+        destroyRecognizer()
 
-    override fun onSensorChanged(event: SensorEvent?) {
-        if (event?.sensor?.type == Sensor.TYPE_PROXIMITY) {
-            val distance = event.values[0]
-            val maxRange = proximitySensor?.maximumRange ?: 5f
-            isPhoneInPocket = distance < maxRange
+        scope.launch(Dispatchers.IO) {
+            try {
+                val sampleRate = 16000
+                val minBuf = AudioRecord.getMinBufferSize(
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                )
+                passiveAudioRecord = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    minBuf
+                )
 
-            if (isPhoneInPocket && isListeningNow) {
-                destroyRecognizer()
-            } else if (!isPhoneInPocket && !prefs.isSleeping && !isEngineBusy && !isListeningNow) {
-                initRecognizerAndStart()
+                val buffer = ShortArray(minBuf / 2)
+                passiveAudioRecord?.startRecording()
+                isPassiveListening = true
+
+                while (isActive && isPassiveListening && !prefs.isSleeping && !isPhoneInPocket) {
+                    val read = passiveAudioRecord?.read(buffer, 0, buffer.size) ?: 0
+                    if (read > 0) {
+                        var sum = 0.0
+                        for (i in 0 until read) {
+                            sum += buffer[i] * buffer[i]
+                        }
+                        val rms = Math.sqrt(sum / read)
+
+                        // Threshold check: User voice detected -> Transition to Stage 2 SpeechRecognizer
+                        if (rms > 1200.0) {
+                            stopPassiveListening()
+                            launchOnMain { initRecognizerAndStart() }
+                            break
+                        }
+                    }
+                    delay(40)
+                }
+            } catch (_: Exception) {
+                stopPassiveListening()
+                launchOnMain { safeRestart(1500) }
             }
         }
     }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    private fun stopPassiveListening() {
+        isPassiveListening = false
+        try {
+            passiveAudioRecord?.stop()
+            passiveAudioRecord?.release()
+        } catch (_: Exception) {}
+        passiveAudioRecord = null
+    }
 
-    // ---------------- SPEECH RECOGNIZER LIFECYCLE ----------------
+    private fun launchOnMain(block: () -> Unit) {
+        scope.launch(Dispatchers.Main) { block() }
+    }
 
+    // ---------------- STAGE 2: FULL ACCURATE SPEECH RECOGNIZER ----------------
     private fun initRecognizerAndStart() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this) || isPhoneInPocket) return
+        if (!SpeechRecognizer.isRecognitionAvailable(this) || isPhoneInPocket) {
+            startPassiveEnergyListening()
+            return
+        }
 
         destroyRecognizer()
 
@@ -138,7 +198,13 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
                     isListeningNow = true
                 }
 
-                override fun onBeginningOfSpeech() {}
+                override fun onBeginningOfSpeech() {
+                    if (isSpeaking) {
+                        tts?.stop()
+                        isSpeaking = false
+                        AgentAccessibilityService.instance?.showIsland("Interrupted • Listening...")
+                    }
+                }
 
                 override fun onRmsChanged(rmsdB: Float) {
                     if (isAwaitingDirectCommand) {
@@ -162,8 +228,9 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
 
                 override fun onError(error: Int) {
                     isListeningNow = false
-                    if (!prefs.isSleeping && !isEngineBusy && !isPhoneInPocket) {
-                        safeRestart(1000)
+                    destroyRecognizer()
+                    if (!prefs.isSleeping && !isPhoneInPocket) {
+                        startPassiveEnergyListening()
                     }
                 }
 
@@ -183,8 +250,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
     }
 
     private fun launchRecognitionIntent() {
-        if (prefs.isSleeping || isEngineBusy || isListeningNow || isPhoneInPocket) return
-
+        if (prefs.isSleeping || isListeningNow || isPhoneInPocket) return
         try {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -199,21 +265,35 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
     }
 
     private fun safeRestart(delayMs: Long) {
-        if (prefs.isSleeping || isEngineBusy || isPhoneInPocket) return
+        if (prefs.isSleeping || isPhoneInPocket) return
         scope.launch {
             delay(delayMs)
-            if (!prefs.isSleeping && !isEngineBusy && !isListeningNow && !isPhoneInPocket) {
-                launchRecognitionIntent()
+            if (!prefs.isSleeping && !isListeningNow && !isPhoneInPocket) {
+                startPassiveEnergyListening()
             }
         }
     }
 
-    // ---------------- AUDIO & HAPTIC FEEDBACK ----------------
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event?.sensor?.type == Sensor.TYPE_PROXIMITY) {
+            val distance = event.values[0]
+            val maxRange = proximitySensor?.maximumRange ?: 5f
+            isPhoneInPocket = distance < maxRange
+
+            if (isPhoneInPocket) {
+                stopPassiveListening()
+                destroyRecognizer()
+            } else if (!isPhoneInPocket && !prefs.isSleeping && !isListeningNow) {
+                startPassiveEnergyListening()
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun triggerWakeFeedback() {
         try {
             toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 120)
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
                 vibratorManager.defaultVibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
@@ -225,17 +305,15 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
         } catch (_: Throwable) {}
     }
 
-    // ---------------- INTENT & WAKE-WORD LOGIC ----------------
-
     private fun handleSpokenText(spoken: String) {
         if (spoken.isBlank()) {
-            safeRestart(600)
+            destroyRecognizer()
+            startPassiveEnergyListening()
             return
         }
 
         val wake = prefs.wakeWord.lowercase(Locale.getDefault()).trim()
 
-        // 1. WAKE UP COMMAND (From Sleep State)
         if (prefs.isSleeping) {
             if (spoken.contains("wake up") || spoken.contains("uth jao") || spoken.contains("on ho jao") || spoken.contains(wake)) {
                 prefs.isSleeping = false
@@ -247,12 +325,12 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
             return
         }
 
-        // 2. SHUTDOWN / SLEEP TRIGGER (Full Physical Mic Release)
         if (spoken.contains("shutdown") || spoken.contains("shut down") || spoken.contains("so jao") ||
             spoken.contains("turn off") || spoken.contains("band ho jao") || spoken.contains("sleep") || spoken.contains("chup raho")) {
 
             prefs.isSleeping = true
             isAwaitingDirectCommand = false
+            stopPassiveListening()
             destroyRecognizer()
             updateServiceNotification("Sleeping (Mic OFF)")
             AgentAccessibilityService.instance?.showIsland("Mira: Sleeping")
@@ -260,7 +338,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
             return
         }
 
-        // 3. WAKE-WORD DETECTED
         if (spoken.contains(wake)) {
             triggerWakeFeedback()
             val leftoverCommand = spoken.substringAfter(wake).trim()
@@ -274,19 +351,18 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
             return
         }
 
-        // 4. AWAITING DIRECT COMMAND
         if (isAwaitingDirectCommand) {
             isAwaitingDirectCommand = false
             executeUserCommand(spoken)
             return
         }
 
-        safeRestart(600)
+        destroyRecognizer()
+        startPassiveEnergyListening()
     }
 
     private fun executeUserCommand(command: String) {
         destroyRecognizer()
-        isEngineBusy = true
         AgentAccessibilityService.instance?.showIsland("Thinking...")
 
         scope.launch {
@@ -295,11 +371,10 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
         }
     }
 
-    // ---------------- DIALECT-AWARE TTS ----------------
-
     private fun speakAndFollowUp(text: String, expectReply: Boolean) {
         destroyRecognizer()
-        isEngineBusy = true
+        stopPassiveListening()
+        isSpeaking = true
 
         val dialect = DialectAdapter.detectDialect(text)
         tts?.language = dialect.ttsLocale
@@ -308,28 +383,29 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
 
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
-                isEngineBusy = true
+                isSpeaking = true
             }
 
             override fun onDone(utteranceId: String?) {
-                isEngineBusy = false
-
+                isSpeaking = false
                 if (!prefs.isSleeping && !isPhoneInPocket) {
                     scope.launch {
-                        delay(450)
+                        delay(350)
                         if (expectReply) {
                             isAwaitingDirectCommand = true
+                            initRecognizerAndStart()
+                        } else {
+                            startPassiveEnergyListening()
                         }
-                        initRecognizerAndStart()
                     }
                 }
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
-                isEngineBusy = false
+                isSpeaking = false
                 if (!prefs.isSleeping && !isPhoneInPocket) {
-                    safeRestart(800)
+                    startPassiveEnergyListening()
                 }
             }
         })
@@ -356,6 +432,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener, SensorEvent
     override fun onDestroy() {
         job.cancel()
         sensorManager.unregisterListener(this)
+        stopPassiveListening()
         destroyRecognizer()
         toneGenerator?.release()
         tts?.shutdown()
