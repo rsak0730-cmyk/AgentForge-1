@@ -21,17 +21,16 @@ class AgentEngine(
     private val prefs = AppPrefs(context)
     private val chatHistory = mutableListOf<Pair<String, String>>()
 
-    // Strictly blocked sensitive packages
     private val blockedFinancialPackages = listOf(
-        "com.google.android.apps.nbu.paisa.user", // Google Pay
-        "net.one97.paytm",                        // Paytm
-        "com.phonepe.app",                        // PhonePe
-        "in.org.npci.upiapp",                     // BHIM
-        "com.sbi.lotusintouch",                   // YONO SBI
-        "com.msf.kbank.mobile",                   // Kotak
-        "com.axis.mobile",                        // Axis Mobile
-        "com.icicibank.mobile",                   // iMobile
-        "com.hdfcbank.android"                    // HDFC MobileBanking
+        "com.google.android.apps.nbu.paisa.user",
+        "net.one97.paytm",
+        "com.phonepe.app",
+        "in.org.npci.upiapp",
+        "com.sbi.lotusintouch",
+        "com.msf.kbank.mobile",
+        "com.axis.mobile",
+        "com.icicibank.mobile",
+        "com.hdfcbank.android"
     )
 
     suspend fun execute(userInput: String): String = withContext(Dispatchers.IO) {
@@ -44,12 +43,8 @@ class AgentEngine(
         }
 
         val systemPrompt = """
-            Aap ek real human girl companion aur warm, sweet personal assistant ho jiska naam "$currentAssistantName" hai.
+            Aap ek omnipotent, obedient Android OS companion aur sweet girl assistant ho jiska naam "$currentAssistantName" hai.
             User ka naam Manish hai.
-            
-            Aapka behavior:
-            - Ek caring, sweet, lively female friend ki tarah baat karna (Hinglish/Bengali/Hindi).
-            - Kabhi kabhar Manish ko uski purani baatein natural baatcheet ke dauran recall karwana (jaise: "Aapne bataya tha aapko ye pasand hai...").
             
             USER KA MEMORY VAULT:
             $storedMemories
@@ -60,24 +55,30 @@ class AgentEngine(
             CURRENT USER INPUT:
             "$trimmedInput"
             
+            Aap phone me chal rahi KISI BHI APP (YouTube, Instagram, Browser, Shopping, Files, WhatsApp, etc.) ke har UI element, button aur video ko control kar sakti ho.
+            
             ACTIONS SUPPORTED:
-            1. APP_CONTROL: (Like, Share, Comment, Save, Next/Scroll Down, Previous/Scroll Up, Play, Pause, Tap on any option).
-               param: "LIKE" | "SHARE" | "COMMENT" | "SAVE" | "SCROLL_DOWN" | "SCROLL_UP" | "PLAY_PAUSE" | custom button text
-            2. LAUNCH: Open any installed non-banking app.
-            3. YOUTUBE: Play music, search mood-based videos.
-            4. WEB_SEARCH: Search Google.
-            5. ALARM: Set reminder or alarm.
-            6. REMEMBER: Store personal details.
-            7. CHAT: Warm female conversational reply.
+            1. VIDEO_CONTROL:
+               param: "FORWARD" (10s aage) | "REWIND" (10s peeche) | "PLAY_PAUSE" | "FULL_SCREEN"
+            2. APP_ACTION:
+               param: "SCROLL_DOWN" | "SCROLL_UP" | "LIKE" | "SHARE" | "COMMENT" | "SUBSCRIBE" | "SAVE" | or EXACT ANY BUTTON TEXT/DESCRIPTION on the screen (e.g. "Buy Now", "Profile", "Search", "Next", "Close", "Send").
+            3. TYPE_TEXT:
+               param: "Text to type into the current focused input field"
+            4. LAUNCH: Open any installed non-banking app.
+            5. YOUTUBE: Play/search music or video.
+            6. WEB_SEARCH: Search Google.
+            7. ALARM: Set reminder or alarm.
+            8. REMEMBER: Store personal details.
+            9. CHAT: Empathetic girl response.
             
             OUTPUT RULES (RAW JSON ONLY, NO MARKDOWN):
             {
-              "thought": "Understanding user intent",
-              "action": "APP_CONTROL | LAUNCH | YOUTUBE | WEB_SEARCH | ALARM | REMEMBER | CHAT",
-              "param": "Target parameter or button name",
-              "remember_key": "Fact key if user shared personal detail",
-              "remember_value": "The fact to remember",
-              "reply": "Sweet, expressive, natural girl reply for Manish"
+              "thought": "Deep context reasoning",
+              "action": "VIDEO_CONTROL | APP_ACTION | TYPE_TEXT | LAUNCH | YOUTUBE | WEB_SEARCH | ALARM | REMEMBER | CHAT",
+              "param": "Resolved action or target button text/description",
+              "remember_key": "Detail key if any",
+              "remember_value": "Detail value if any",
+              "reply": "Sweet natural response"
             }
         """.trimIndent()
 
@@ -94,14 +95,22 @@ class AgentEngine(
         }
 
         val finalReply = when (parsed.action) {
-            "APP_CONTROL" -> {
-                handleAppInteraction(parsed.param)
+            "VIDEO_CONTROL" -> {
+                handleVideoControl(parsed.param)
                 parsed.reply
+            }
+            "APP_ACTION" -> {
+                handleUniversalAppAction(parsed.param)
+                parsed.reply
+            }
+            "TYPE_TEXT" -> {
+                val ok = AgentAccessibilityService.instance?.typeTextIntoFocusedOrById(null, parsed.param) ?: false
+                if (ok) "Type kar diya Manish." else "Input field par focus nahi tha."
             }
             "LAUNCH" -> {
                 val pkg = getPackageByName(parsed.param)
                 if (pkg != null && isFinancialApp(pkg)) {
-                    "Security reasons ke chalte main banking ya payment apps open nahi kar sakti Manish."
+                    "Security reasons ke chalte main banking ya payment apps access nahi kar sakti Manish."
                 } else if (pkg != null) {
                     launchPackage(pkg)
                     parsed.reply
@@ -110,7 +119,7 @@ class AgentEngine(
                 }
             }
             "YOUTUBE" -> {
-                val query = if (parsed.param.isNotBlank()) parsed.param else getMemory("fav_song") ?: "sweet melodies"
+                val query = if (parsed.param.isNotBlank()) parsed.param else getMemory("fav_song") ?: "Arz kya hai"
                 openYouTubeSearch(query)
                 parsed.reply
             }
@@ -131,17 +140,27 @@ class AgentEngine(
         finalReply
     }
 
-    private fun handleAppInteraction(actionType: String) {
+    private fun handleVideoControl(command: String) {
         val service = AgentAccessibilityService.instance ?: return
-        when (actionType.uppercase()) {
+        when (command.uppercase()) {
+            "FORWARD" -> service.forwardVideo()
+            "REWIND" -> service.rewindVideo()
+            "PLAY_PAUSE", "PLAY", "PAUSE" -> service.clickByTextOrDescription(listOf("play", "pause", "video player", "touch to play"))
+            "FULL_SCREEN" -> service.clickByTextOrDescription(listOf("full screen", "fullscreen", "enter full screen", "maximize"))
+        }
+    }
+
+    private fun handleUniversalAppAction(target: String) {
+        val service = AgentAccessibilityService.instance ?: return
+        when (target.uppercase()) {
             "SCROLL_DOWN", "NEXT" -> service.scrollForward()
             "SCROLL_UP", "PREVIOUS" -> service.scrollBackward()
-            "LIKE" -> service.clickByTextOrDescription(listOf("like", "heart", "pasand", "thumbs up"))
+            "LIKE" -> service.clickByTextOrDescription(listOf("like", "heart", "thumbs up", "pasand"))
+            "SUBSCRIBE" -> service.clickByTextOrDescription(listOf("subscribe", "subscribed", "ghanti", "bell"))
             "SHARE" -> service.clickByTextOrDescription(listOf("share", "send", "bhejo"))
-            "COMMENT" -> service.clickByTextOrDescription(listOf("comment", "tippani", "reply"))
-            "SAVE" -> service.clickByTextOrDescription(listOf("save", "bookmark", "collection"))
-            "PLAY_PAUSE", "PLAY", "PAUSE" -> service.clickByTextOrDescription(listOf("play", "pause", "video"))
-            else -> service.clickByTextOrDescription(listOf(actionType.lowercase()))
+            "COMMENT" -> service.clickByTextOrDescription(listOf("comment", "tippani", "reply", "add a comment"))
+            "SAVE" -> service.clickByTextOrDescription(listOf("save", "bookmark", "collection", "save to playlist"))
+            else -> service.clickAnyElementOnScreen(target)
         }
     }
 
@@ -171,7 +190,7 @@ class AgentEngine(
                     param = obj.optString("param", ""),
                     rememberKey = obj.optString("remember_key", ""),
                     rememberValue = obj.optString("remember_value", ""),
-                    reply = obj.optString("reply", "Haan Manish, sun rahi hoon!")
+                    reply = obj.optString("reply", "Haan Manish, ho gaya!")
                 )
             } else {
                 fallbackDeducer(raw, originalInput)
@@ -184,18 +203,24 @@ class AgentEngine(
     private fun fallbackDeducer(rawReply: String, input: String): ParsedAction {
         val lower = input.lowercase()
         return when {
-            lower.contains("scroll") || lower.contains("next") || lower.contains("aage karo") -> {
-                ParsedAction("APP_CONTROL", "SCROLL_DOWN", "", "", "Next reel scroll kar diya!")
+            lower.contains("forward") || lower.contains("aage karo") || lower.contains("skip") -> {
+                ParsedAction("VIDEO_CONTROL", "FORWARD", "", "", "Video 10 second aage kar diya!")
             }
-            lower.contains("like") || lower.contains("pasand") -> {
-                ParsedAction("APP_CONTROL", "LIKE", "", "", "Like kar diya!")
+            lower.contains("rewind") || lower.contains("peeche") || lower.contains("back karo") -> {
+                ParsedAction("VIDEO_CONTROL", "REWIND", "", "", "Video 10 second peeche kar diya!")
             }
-            lower.contains("share") -> {
-                ParsedAction("APP_CONTROL", "SHARE", "", "", "Share menu open kar diya.")
+            lower.contains("subscribe") -> {
+                ParsedAction("APP_ACTION", "SUBSCRIBE", "", "", "Channel subscribe kar diya!")
+            }
+            lower.contains("scroll") || lower.contains("next") -> {
+                ParsedAction("APP_ACTION", "SCROLL_DOWN", "", "", "Scroll kar diya!")
+            }
+            lower.contains("like") -> {
+                ParsedAction("APP_ACTION", "LIKE", "", "", "Like kar diya!")
             }
             lower.contains("youtube") || lower.contains("gaana") -> {
                 val query = if (lower.contains("fav")) getMemory("fav_song") ?: "Arz kya hai" else "relaxing songs"
-                ParsedAction("YOUTUBE", query, "", "", "YouTube par gaana chala diya hai!")
+                ParsedAction("YOUTUBE", query, "", "", "YouTube par gaana chala diya!")
             }
             else -> {
                 ParsedAction("CHAT", "", "", "", if (rawReply.isNotBlank()) rawReply else "Haan Manish, boliye main kya karoon?")

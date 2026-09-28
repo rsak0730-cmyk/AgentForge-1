@@ -120,7 +120,6 @@ class AgentAccessibilityService : AccessibilityService() {
                     if (!isVolumeUpPressed) {
                         isVolumeUpPressed = true
                         isHoldTriggered = false
-                        // 3 seconds hold threshold
                         keyHandler.postDelayed(longPressRunnable, 3000)
                     }
                     return isHoldTriggered || isListeningActive
@@ -382,7 +381,49 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
-    // ---------------- IN-APP GESTURE & INTERACTION ENGINE ----------------
+    // ---------------- VIDEO CONTROLS (FORWARD & REWIND GESTURES) ----------------
+
+    fun forwardVideo(): Boolean {
+        // Look for native fast forward node first
+        val root = rootInActiveWindow
+        if (root != null && clickByTextOrDescription(listOf("fast forward", "forward 10 seconds", "seek forward"))) {
+            return true
+        }
+        // Fallback: Double tap on right side of video player (75% X, 40% Y)
+        val metrics = resources.displayMetrics
+        val targetX = metrics.widthPixels * 0.78f
+        val targetY = metrics.heightPixels * 0.35f
+        return doubleTapCoordinates(targetX, targetY)
+    }
+
+    fun rewindVideo(): Boolean {
+        // Look for native rewind node first
+        val root = rootInActiveWindow
+        if (root != null && clickByTextOrDescription(listOf("rewind", "rewind 10 seconds", "seek backward"))) {
+            return true
+        }
+        // Fallback: Double tap on left side of video player (25% X, 40% Y)
+        val metrics = resources.displayMetrics
+        val targetX = metrics.widthPixels * 0.22f
+        val targetY = metrics.heightPixels * 0.35f
+        return doubleTapCoordinates(targetX, targetY)
+    }
+
+    private fun doubleTapCoordinates(x: Float, y: Float): Boolean {
+        val path1 = Path().apply { moveTo(x, y) }
+        val stroke1 = GestureDescription.StrokeDescription(path1, 0, 50)
+
+        val path2 = Path().apply { moveTo(x, y) }
+        val stroke2 = GestureDescription.StrokeDescription(path2, 100, 50)
+
+        val gesture = GestureDescription.Builder()
+            .addStroke(stroke1)
+            .addStroke(stroke2)
+            .build()
+        return dispatchGesture(gesture, null, null)
+    }
+
+    // ---------------- UNIVERSAL IN-APP GESTURE & UI CLICK ENGINE ----------------
 
     fun scrollForward(): Boolean {
         val root = rootInActiveWindow ?: return false
@@ -429,12 +470,18 @@ class AgentAccessibilityService : AccessibilityService() {
         return searchAndClick(root, keywords)
     }
 
+    fun clickAnyElementOnScreen(targetText: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        return searchAndClick(root, listOf(targetText.lowercase().trim()))
+    }
+
     private fun searchAndClick(node: AccessibilityNodeInfo?, keywords: List<String>): Boolean {
         if (node == null) return false
         val text = node.text?.toString()?.lowercase() ?: ""
         val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
 
-        val isMatch = keywords.any { k -> text.contains(k) || desc.contains(k) }
+        val isMatch = keywords.any { k -> text.contains(k) || desc.contains(k) || viewId.contains(k) }
         if (isMatch) {
             var clickableNode: AccessibilityNodeInfo? = node
             while (clickableNode != null && !clickableNode.isClickable) {
@@ -487,43 +534,6 @@ class AgentAccessibilityService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             extractAllNodeTexts(node.getChild(i), sb)
         }
-    }
-
-    fun getIndexedScreenElements(): String {
-        val root = rootInActiveWindow ?: return "Screen tree empty or locked."
-        elementBoundsMap.clear()
-        val elements = mutableListOf<String>()
-        traverseNodes(root, elements, 1)
-        return elements.joinToString("\n")
-    }
-
-    private fun traverseNodes(node: AccessibilityNodeInfo?, list: MutableList<String>, counterRef: Int): Int {
-        if (node == null) return counterRef
-        var currentId = counterRef
-
-        val text = node.text?.toString()?.trim()
-        val desc = node.contentDescription?.toString()?.trim()
-        val isClickable = node.isClickable
-        val isEditable = node.isEditable
-
-        if (!text.isNullOrEmpty() || !desc.isNullOrEmpty() || isEditable) {
-            val label = if (!text.isNullOrEmpty()) text else (desc ?: "Input")
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            val cx = rect.centerX().toFloat()
-            val cy = rect.centerY().toFloat()
-
-            if (rect.width() > 0 && rect.height() > 0) {
-                elementBoundsMap[currentId] = Pair(cx, cy)
-                list.add("[#$currentId] \"$label\" | ${if (isEditable) "Input" else "Clickable"} | ($cx, $cy)")
-                currentId++
-            }
-        }
-
-        for (i in 0 until node.childCount) {
-            currentId = traverseNodes(node.getChild(i), list, currentId)
-        }
-        return currentId
     }
 
     fun clickElementById(id: Int): Boolean {
