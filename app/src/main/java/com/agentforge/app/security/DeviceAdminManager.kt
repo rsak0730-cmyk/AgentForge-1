@@ -12,7 +12,6 @@ class AgentAdminReceiver : DeviceAdminReceiver() {
 }
 
 class DeviceAdminManager(private val context: Context) {
-
     private val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
     val adminComponent = ComponentName(context, AgentAdminReceiver::class.java)
 

@@ -7,9 +7,9 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.provider.AlarmClock
-import android.provider.Settings
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
+import com.agentforge.app.data.MemoryVault
 import com.agentforge.app.service.AgentAccessibilityService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,6 +22,7 @@ class AgentEngine(
     private val shizuku: ShizukuBridge
 ) {
     private val prefs = AppPrefs(context)
+    private val memoryVault = MemoryVault(context)
     private val chatHistory = mutableListOf<Pair<String, String>>()
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -53,6 +54,7 @@ class AgentEngine(
         // ---------------- STAGE 2: OVERSMART GEMINI MULTI-INTENT BRAIN ----------------
         val currentAssistantName = prefs.name
         val storedMemories = prefs.agentMemories
+        val structuredFacts = memoryVault.getMemorySummary()
 
         val historyContext = chatHistory.takeLast(8).joinToString("\n") {
             "User: ${it.first}\n$currentAssistantName: ${it.second}"
@@ -64,6 +66,8 @@ class AgentEngine(
             
             USER KA LONG-TERM MEMORY VAULT:
             $storedMemories
+            Structured Facts:
+            $structuredFacts
             
             RECENT CONVERSATION HISTORY:
             $historyContext
@@ -106,6 +110,7 @@ class AgentEngine(
 
         if (parsed.rememberKey.isNotBlank() && parsed.rememberValue.isNotBlank()) {
             saveMemory(parsed.rememberKey, parsed.rememberValue)
+            memoryVault.saveFact("${parsed.rememberKey}: ${parsed.rememberValue}")
         }
 
         val finalReply = when (parsed.action) {
@@ -154,9 +159,7 @@ class AgentEngine(
         finalReply
     }
 
-    // ---------------- FAST LOCAL OFFLINE HARDWARE EXECUTION ----------------
     private fun handleLocalOfflineCommands(lower: String): String? {
-        // Flashlight Control
         if (lower.contains("torch") || lower.contains("flashlight")) {
             return if (lower.contains("on") || lower.contains("chalao") || lower.contains("jalao")) {
                 toggleFlashlight(true)
@@ -170,7 +173,6 @@ class AgentEngine(
             }
         }
 
-        // Volume Controls
         if (lower.contains("volume") || lower.contains("aawaz")) {
             if (lower.contains("up") || lower.contains("badhao") || lower.contains("tez")) {
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
@@ -186,7 +188,6 @@ class AgentEngine(
             }
         }
 
-        // Basic OS Navigation
         if (lower == "home" || lower == "home screen" || lower == "bahar aao") {
             AgentAccessibilityService.instance?.performGlobalAction(AgentAccessibilityService.GLOBAL_ACTION_HOME)
             return "Home screen par aa gayi hoon."

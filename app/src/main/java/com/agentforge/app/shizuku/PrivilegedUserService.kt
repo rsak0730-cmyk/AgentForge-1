@@ -7,7 +7,6 @@ import java.io.InputStreamReader
 
 @Keep
 class PrivilegedUserService : IPrivilegedActions.Stub() {
-
     override fun runAllowed(action: String, payload: String?): String {
         val cmd = when (action) {
             "home" -> arrayOf("cmd", "input", "keyevent", "KEYCODE_HOME")

@@ -9,21 +9,18 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import com.agentforge.app.service.AgentAccessibilityService
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 class CallVoicemailService : Service() {
-
     private var recorder: MediaRecorder? = null
     private var isRecording = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         val caller = intent?.getStringExtra("CALLER_NUMBER") ?: "Unknown"
-
         if (action == "START_RECORDING" && !isRecording) {
             startForegroundNotification(caller)
             startCallRecording(caller)
@@ -31,7 +28,6 @@ class CallVoicemailService : Service() {
             stopCallRecording()
             stopSelf()
         }
-
         return START_NOT_STICKY
     }
 
@@ -41,13 +37,11 @@ class CallVoicemailService : Service() {
             val channel = NotificationChannel(channelId, "Voicemail Recorder", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
         }
-
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Live Voicemail Recording")
             .setContentText("Recording caller audio from: $caller")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .build()
-
         startForeground(202, notification)
         AgentAccessibilityService.instance?.showIsland("Voicemail: Recording $caller")
     }
@@ -58,15 +52,12 @@ class CallVoicemailService : Service() {
             val time = SimpleDateFormat("ddMMM_HHmm", Locale.getDefault()).format(Date())
             val cleanCaller = caller.replace("+", "").replace(" ", "")
             val file = File(audioDir, "Caller_${cleanCaller}_$time.m4a")
-
             val mr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 MediaRecorder(this)
             } else {
                 @Suppress("DEPRECATION")
                 MediaRecorder()
             }
-
-            // Android me phone call audio record karne ke liye VOICE_COMMUNICATION ya MIC use hota hai
             mr.apply {
                 setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -78,7 +69,6 @@ class CallVoicemailService : Service() {
             recorder = mr
             isRecording = true
         } catch (_: Exception) {
-            // Agar carrier lock ki wajah se VOICE_COMMUNICATION fail ho toh MIC fallback
             try {
                 val audioDir = File(filesDir, "voicemails")
                 val time = SimpleDateFormat("ddMMM_HHmm", Locale.getDefault()).format(Date())

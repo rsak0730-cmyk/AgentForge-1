@@ -11,7 +11,6 @@ data class PredictedIntent(
 )
 
 class PredictiveActionEngine(private val context: Context) {
-
     fun evaluateNextIntent(lastForegroundPackage: String? = null): PredictedIntent? {
         val cal = Calendar.getInstance()
         val hour = cal.get(Calendar.HOUR_OF_DAY)

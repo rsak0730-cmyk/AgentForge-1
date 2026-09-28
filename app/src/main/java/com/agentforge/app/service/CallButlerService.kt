@@ -27,7 +27,6 @@ import org.json.JSONObject
 import java.util.Locale
 
 class CallButlerService : Service(), TextToSpeech.OnInitListener {
-
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Main + job)
     private var tts: TextToSpeech? = null
@@ -42,7 +41,6 @@ class CallButlerService : Service(), TextToSpeech.OnInitListener {
         prefs = AppPrefs(this)
         ai = AiClient(prefs)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
         setupSilentAudioUplink()
         tts = TextToSpeech(this, this)
         startButlerForeground()
@@ -52,24 +50,17 @@ class CallButlerService : Service(), TextToSpeech.OnInitListener {
         try {
             originalAudioMode = audioManager.mode
             originalMediaVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-
-            // Phone ke outer speaker ko physically mute karo
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
-
-            // Audio Mode ko direct Telephony Call Uplink me route karo
             audioManager.mode = AudioManager.MODE_IN_CALL
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val playbackAttributes = AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
-
                 val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                     .setAudioAttributes(playbackAttributes)
                     .setAcceptsDelayedFocusGain(true)
                     .build()
-
                 audioManager.requestAudioFocus(focusRequest)
             }
         } catch (_: Throwable) {}
@@ -107,44 +98,31 @@ class CallButlerService : Service(), TextToSpeech.OnInitListener {
 
     private suspend fun screenCallerSilently(caller: String) {
         AgentAccessibilityService.instance?.showIsland("Silent Screening: $caller")
-
-        // 1. Initial greeting to the caller only
         val initialGreeting = "Namaste. Manish abhi available nahi hain. Aap kaun bol rahe hain aur kya kaam hai?"
         speakDirectToCallUplink(initialGreeting, Locale("hi", "IN"))
-
-        // Simulating speech sample capture from telephony channel
         delay(4000)
         val callerSimulatedText = "Ami bolchi dada, dorkari kotha chilo"
-
-        // 2. Multilingual AI Language Analysis
         val prompt = """
-Caller words: "$callerSimulatedText"
-Analyze the language of the caller (Bengali, Hindi, or English).
-Formulate a short, polite butler response in that EXACT SAME language.
-State that Manish will review the transcript on his screen.
-Output STRICT JSON:
-{"detected_lang": "bn"|"hi"|"en", "reply_text": "...", "is_spam": false}
+            Caller words: "$callerSimulatedText"
+            Analyze the language of the caller (Bengali, Hindi, or English).
+            Formulate a short, polite butler response in that EXACT SAME language.
+            State that Manish will review the transcript on his screen.
+            Output STRICT JSON: {"detected_lang": "bn"|"hi"|"en", "reply_text": "...", "is_spam": false}
         """.trimIndent()
-
         val raw = ai.ask(prompt)
         val clean = raw.replace("```json", "").replace("```", "").trim()
-
         try {
             val obj = JSONObject(clean)
             val lang = obj.optString("detected_lang", "hi")
             val replyText = obj.optString("reply_text")
             val isSpam = obj.optBoolean("is_spam", false)
-
             val targetLocale = when (lang) {
                 "bn" -> Locale("bn", "IN")
                 "en" -> Locale.ENGLISH
                 else -> Locale("hi", "IN")
             }
-
-            // Screen par live transcript dikhega bina phone speaker par koi aawaz aaye
             AgentAccessibilityService.instance?.showIsland("Caller: $callerSimulatedText")
             speakDirectToCallUplink(replyText, targetLocale)
-
             if (isSpam) {
                 delay(3000)
                 terminateCall()
@@ -156,13 +134,10 @@ Output STRICT JSON:
 
     private fun speakDirectToCallUplink(text: String, locale: Locale) {
         tts?.language = locale
-
-        // Direct Stream Injection to Telephony Call Uplink
         val params = Bundle().apply {
             putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_VOICE_CALL)
-            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f) // Caller ko aawaz clear sunai degi
+            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
         }
-
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "CALL_UPLINK_TTS")
     }
 

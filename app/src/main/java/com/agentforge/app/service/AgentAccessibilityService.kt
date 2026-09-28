@@ -265,7 +265,6 @@ class AgentAccessibilityService : AccessibilityService() {
                 if (islandRoot == null) {
                     val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
                         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                            // Touch toggle: Mic active listening on/off
                             val intent = Intent(this@AgentAccessibilityService, VoiceListenerService::class.java).apply {
                                 action = VoiceListenerService.ACTION_START_LISTENING
                             }
@@ -399,7 +398,6 @@ class AgentAccessibilityService : AccessibilityService() {
             val success = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
 
             if (success) {
-                // Wait briefly and tap "Send" button
                 Handler(Looper.getMainLooper()).postDelayed({
                     clickByTextOrDescription(listOf("send", "bhejo", "submit", "enter"))
                 }, 400)
