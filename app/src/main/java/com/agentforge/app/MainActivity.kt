@@ -78,6 +78,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -812,7 +813,6 @@ private fun SliderItem(label: String, value: Float, min: Float, max: Float, onVa
     }
 }
 
-// ---------------- 133-POINT MESH ENROLLMENT DIALOG ----------------
 @Composable
 fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -913,7 +913,6 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
     )
 }
 
-// ---------------- MULTI-FRAME AUTHENTICATION UNLOCK SCREEN ----------------
 @Composable
 fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
