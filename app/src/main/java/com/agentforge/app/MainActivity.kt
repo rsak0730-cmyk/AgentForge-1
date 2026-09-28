@@ -21,7 +21,10 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
@@ -196,7 +200,7 @@ fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
         )
     ) {
         if (!isAppUnlocked && prefs.isFaceLockEnabled && prefs.isFaceEnrolled) {
-            RealFaceUnlockScreen(
+            StealthFaceUnlockScreen(
                 prefs = prefs,
                 onVerified = { isAppUnlocked = true }
             )
@@ -665,9 +669,9 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                     Icon(Icons.Default.Face, contentDescription = null, tint = NeonBlueAccent)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("133-Point Facial Mesh & Contours", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
+                        Text("Stealth Facial Mesh & Contours", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
                         Text(
-                            text = if (isFaceEnrolled) "Strict Owner Biometrics Enrolled" else "Not calibrated • Requires frontal face scan",
+                            text = if (isFaceEnrolled) "Owner Biometrics Active • Stealth Unlock Ready" else "Not calibrated • Requires frontal face scan",
                             fontSize = 11.sp,
                             color = if (isFaceEnrolled) Color(0xFF00FF7F) else Color.Gray
                         )
@@ -701,7 +705,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                 Spacer(Modifier.height(12.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Enable Strict Face Unlock", modifier = Modifier.weight(1f), color = WhiteNeonBlue, fontSize = 13.sp)
+                    Text("Enable Mobile-Style Stealth Face Unlock", modifier = Modifier.weight(1f), color = WhiteNeonBlue, fontSize = 13.sp)
                     Switch(
                         checked = faceLock && isFaceEnrolled,
                         enabled = isFaceEnrolled,
@@ -813,10 +817,11 @@ private fun SliderItem(label: String, value: Float, min: Float, max: Float, onVa
     }
 }
 
+// ---------------- ENROLLMENT DIALOG (CALIBRATION ONLY) ----------------
 @Composable
 fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    var statusText by remember { mutableStateOf("Look straight at the camera (Hold still)") }
+    var statusText by remember { mutableStateOf("Look straight at the front camera") }
     var isCalibrated by remember { mutableStateOf(false) }
 
     val detectorOptions = remember {
@@ -836,7 +841,7 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(
                     modifier = Modifier
-                        .size(210.dp)
+                        .size(200.dp)
                         .clip(CircleShape)
                         .border(3.dp, if (isCalibrated) Color(0xFF00FF7F) else NeonBlueAccent, CircleShape)
                 ) {
@@ -868,13 +873,13 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
                                                             prefs.registeredFaceHash = hash
                                                             prefs.isFaceEnrolled = true
                                                             isCalibrated = true
-                                                            statusText = "133 Contour Landmarks Locked!"
+                                                            statusText = "Biometric Mesh Saved!"
                                                         }
                                                     } else {
-                                                        statusText = "Please face straight forward"
+                                                        statusText = "Hold head straight"
                                                     }
                                                 } else {
-                                                    statusText = "Hold face inside circle..."
+                                                    statusText = "Looking for face..."
                                                 }
                                             }
                                             .addOnCompleteListener { imageProxy.close() }
@@ -913,12 +918,24 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
     )
 }
 
+// ---------------- STEALTH PHONE-STYLE ZERO-UI UNLOCK WITH ISLAND TELEMETRY ----------------
 @Composable
-fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
+fun StealthFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    var scanStatus by remember { mutableStateOf("Scanning face mesh...") }
+    var scanStatus by remember { mutableStateOf("Recognizing...") }
     var scanMatched by remember { mutableStateOf(false) }
     var consecutiveMatches by remember { mutableIntStateOf(0) }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val lockScale by infiniteTransition.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "lock_scale"
+    )
 
     val detectorOptions = remember {
         FaceDetectorOptions.Builder()
@@ -929,23 +946,18 @@ fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     val detector = remember { FaceDetection.getClient(detectorOptions) }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
-    Column(
-        Modifier.fillMaxSize().background(NeuBackground).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        ShimmerNeonText("Face ID Biometric Access", size = 22)
-        Spacer(Modifier.height(8.dp))
-        Text("Only registered owner can authenticate", fontSize = 12.sp, color = Color.Gray)
-        Spacer(Modifier.height(30.dp))
+    LaunchedEffect(Unit) {
+        AgentAccessibilityService.instance?.showIsland("⟳ Scanning Face...")
+    }
 
-        Box(
-            modifier = Modifier
-                .size(230.dp)
-                .clip(CircleShape)
-                .border(3.dp, if (scanMatched) Color(0xFF00FF7F) else NeonBlueAccent, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(NeuBackground),
+        contentAlignment = Alignment.Center
+    ) {
+        // INVISIBLE 1x1 Camera Surface (No Camera Preview UI shown on display)
+        Box(modifier = Modifier.size(1.dp).clip(CircleShape)) {
             AndroidView(
                 factory = { ctx ->
                     val previewView = PreviewView(ctx)
@@ -973,22 +985,26 @@ fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
                                                 val isMatch = RealFaceBiometricEngine.verifyFaces(prefs.registeredFaceHash, currentHash)
                                                 if (isMatch) {
                                                     consecutiveMatches++
-                                                    scanStatus = "Verifying Identity ($consecutiveMatches/3)..."
+                                                    scanStatus = "Matching Biometrics..."
+                                                    AgentAccessibilityService.instance?.showIsland("⚡ Matching Biometrics (${consecutiveMatches}/3)")
                                                     if (consecutiveMatches >= 3) {
                                                         scanMatched = true
-                                                        scanStatus = "Owner Authenticated! Unlocking..."
+                                                        scanStatus = "Face Verified"
+                                                        AgentAccessibilityService.instance?.showIsland("✓ Face Verified • Unlocked")
                                                         ContextCompat.getMainExecutor(ctx).execute {
                                                             onVerified()
                                                         }
                                                     }
                                                 } else {
                                                     consecutiveMatches = 0
-                                                    scanStatus = "Unknown Face • Access Denied"
+                                                    scanStatus = "Unauthorized Face"
+                                                    AgentAccessibilityService.instance?.showIsland("⚠ Unauthorized Face")
                                                 }
                                             }
                                         } else {
                                             consecutiveMatches = 0
-                                            scanStatus = "Face not detected"
+                                            scanStatus = "Looking for face..."
+                                            AgentAccessibilityService.instance?.showIsland("⟳ Scanning Face...")
                                         }
                                     }
                                     .addOnCompleteListener { imageProxy.close() }
@@ -1011,7 +1027,31 @@ fun RealFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
             )
         }
 
-        Spacer(Modifier.height(28.dp))
-        Text(scanStatus, fontSize = 13.sp, color = if (scanMatched) Color(0xFF00FF7F) else WhiteNeonBlue, fontWeight = FontWeight.SemiBold)
+        // MINIMALIST MOBILE HUD
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(110.dp)
+                    .scale(if (scanMatched) 1.15f else lockScale)
+                    .neumorphicCard(55)
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (scanMatched) Icons.Default.LockOpen else Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = if (scanMatched) Color(0xFF00FF7F) else NeonBlueAccent,
+                    modifier = Modifier.size(46.dp)
+                )
+            }
+
+            Spacer(Modifier.height(28.dp))
+            ShimmerNeonText(if (scanMatched) "Unlocked" else scanStatus, size = 18, weight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text("Hold device at eye level", fontSize = 12.sp, color = Color.Gray)
+        }
     }
 }
