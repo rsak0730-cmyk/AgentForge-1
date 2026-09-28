@@ -28,30 +28,25 @@ class AiClient(private val prefs: AppPrefs) {
 
         val provider = prefs.provider.lowercase().trim()
         var model = prefs.model.trim()
-        if (model.isBlank()) {
-            model = "gemini-2.5-flash"
+        if (model.isBlank() || model == "gemini-2.5-flash") {
+            model = "gemini-3.8-flash"
         }
 
         try {
             when (provider) {
                 "gemini" -> callGemini(apiKey, model, prompt, screenBytes)
                 "openai", "openrouter" -> callOpenAiCompatible(apiKey, model, prompt)
-                else -> callGemini(apiKey, "gemini-2.5-flash", prompt, screenBytes)
+                else -> callGemini(apiKey, model, prompt, screenBytes)
             }
         } catch (e: Exception) {
-            if (provider == "gemini" && model != "gemini-2.5-flash") {
-                try {
-                    return@withContext callGemini(apiKey, "gemini-2.5-flash", prompt, screenBytes)
-                } catch (_: Exception) {}
-            }
-            """{"thought":"API Error","action":"CHAT","param":"","remember_key":"","remember_value":"","reply":"Network me thodi problem aa gayi Manish: ${e.message ?: "Connection failed"}"}"""
+            """{"thought":"API Error","action":"CHAT","param":"","remember_key":"","remember_value":"","reply":"Network me problem aayi Manish: ${e.message ?: "Connection failed"}"}"""
         }
     }
 
     private fun callGemini(apiKey: String, model: String, prompt: String, screenBytes: ByteArray?): String {
         val cleanBase = prefs.baseUrl.trim().removeSuffix("/")
-        val targetModel = if (model.contains("3.")) "gemini-2.5-flash" else model
-        val url = "$cleanBase/v1beta/models/$targetModel:generateContent?key=$apiKey"
+        val cleanModel = model.removePrefix("models/")
+        val url = "$cleanBase/v1beta/models/$cleanModel:generateContent?key=$apiKey"
 
         val rootJson = JSONObject().apply {
             val contentsArray = JSONArray().apply {
@@ -60,7 +55,7 @@ class AiClient(private val prefs: AppPrefs) {
                         // 1. Text Prompt Part
                         put(JSONObject().apply { put("text", prompt) })
 
-                        // 2. Multimodal Screen Vision Image Part (if captured)
+                        // 2. Multimodal Screen Vision Image Part (if available)
                         if (screenBytes != null && screenBytes.isNotEmpty()) {
                             val base64Data = Base64.encodeToString(screenBytes, Base64.NO_WRAP)
                             val inlineData = JSONObject().apply {
@@ -106,7 +101,7 @@ class AiClient(private val prefs: AppPrefs) {
 
     private fun callOpenAiCompatible(apiKey: String, model: String, prompt: String): String {
         val cleanBase = prefs.baseUrl.trim().removeSuffix("/")
-        val url = if (cleanBase.endsWith("/v1")) "$cleanBase/chat/completions" else "$cleanBase/chat/completions"
+        val url = if (cleanBase.endsWith("/v1")) "$cleanBase/chat/completions" else "$cleanBase/v1/chat/completions"
 
         val rootJson = JSONObject().apply {
             put("model", model)

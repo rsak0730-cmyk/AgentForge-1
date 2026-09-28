@@ -52,7 +52,7 @@ class AppPrefs(context: Context) {
         get() = prefs.getString("selected_voice_name", "default_female") ?: "default_female"
         set(v) = prefs.edit().putString("selected_voice_name", v).apply()
 
-    // ---------------- AI API VAULT ----------------
+    // ---------------- AI API VAULT (DEFAULT UPDATED TO gemini-3.8-flash) ----------------
     var provider: String
         get() = prefs.getString("ai_provider", "gemini") ?: "gemini"
         set(v) = prefs.edit().putString("ai_provider", v).apply()
@@ -62,7 +62,7 @@ class AppPrefs(context: Context) {
         set(v) = securePrefs.edit().putString("ai_key", v).apply()
 
     var model: String
-        get() = prefs.getString("ai_model", "gemini-2.5-flash") ?: "gemini-2.5-flash"
+        get() = prefs.getString("ai_model", "gemini-3.8-flash") ?: "gemini-3.8-flash"
         set(v) = prefs.edit().putString("ai_model", v).apply()
 
     var baseUrl: String
