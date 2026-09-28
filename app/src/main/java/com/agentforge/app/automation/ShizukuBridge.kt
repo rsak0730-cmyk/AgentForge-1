@@ -5,12 +5,11 @@ import android.content.pm.PackageManager
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.lang.reflect.Method
 
 class ShizukuBridge(private val context: Context) {
 
-    private val permissionListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
-        // Handle result if needed
-    }
+    private val permissionListener = Shizuku.OnRequestPermissionResultListener { _, _ -> }
 
     init {
         try {
@@ -20,8 +19,7 @@ class ShizukuBridge(private val context: Context) {
 
     fun hasPermission(): Boolean {
         return try {
-            if (Shizuku.isPre_V11()) false
-            else Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         } catch (_: Throwable) {
             false
         }
@@ -53,7 +51,21 @@ class ShizukuBridge(private val context: Context) {
     fun executeCommand(command: String): String {
         if (!hasPermission()) return "Shizuku permission not granted"
         return try {
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
+            // Invoking Shizuku newProcess safely across all API revisions
+            val newProcessMethod: Method = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            newProcessMethod.isAccessible = true
+            val process = newProcessMethod.invoke(
+                null,
+                arrayOf("sh", "-c", command),
+                null,
+                null
+            ) as Process
+
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val output = StringBuilder()
             var line: String?
