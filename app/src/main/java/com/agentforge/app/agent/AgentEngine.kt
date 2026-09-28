@@ -1,5 +1,6 @@
 package com.agentforge.app.agent
 
+import android.accessibilityservice.AccessibilityService
 import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
@@ -160,6 +161,7 @@ class AgentEngine(
     }
 
     private fun handleLocalOfflineCommands(lower: String): String? {
+        // Flashlight Control
         if (lower.contains("torch") || lower.contains("flashlight")) {
             return if (lower.contains("on") || lower.contains("chalao") || lower.contains("jalao")) {
                 toggleFlashlight(true)
@@ -173,6 +175,7 @@ class AgentEngine(
             }
         }
 
+        // Volume Controls
         if (lower.contains("volume") || lower.contains("aawaz")) {
             if (lower.contains("up") || lower.contains("badhao") || lower.contains("tez")) {
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
@@ -188,20 +191,21 @@ class AgentEngine(
             }
         }
 
+        // Basic OS Navigation using proper AccessibilityService base constants
         if (lower == "home" || lower == "home screen" || lower == "bahar aao") {
-            AgentAccessibilityService.instance?.performGlobalAction(AgentAccessibilityService.GLOBAL_ACTION_HOME)
+            AgentAccessibilityService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
             return "Home screen par aa gayi hoon."
         }
         if (lower == "back" || lower == "piche jao" || lower == "wapas") {
-            AgentAccessibilityService.instance?.performGlobalAction(AgentAccessibilityService.GLOBAL_ACTION_BACK)
+            AgentAccessibilityService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
             return "Back kar diya."
         }
         if (lower == "recent" || lower == "recent apps" || lower == "all apps") {
-            AgentAccessibilityService.instance?.performGlobalAction(AgentAccessibilityService.GLOBAL_ACTION_RECENTS)
+            AgentAccessibilityService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
             return "Recent apps open kar diye."
         }
         if (lower.contains("screenshot") || lower.contains("screen capture")) {
-            AgentAccessibilityService.instance?.performGlobalAction(AgentAccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+            AgentAccessibilityService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
             return "Screenshot le liya Manish!"
         }
 
