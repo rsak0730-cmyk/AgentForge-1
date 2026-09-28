@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -63,6 +64,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.agentforge.app.agent.AgentEngine
 import com.agentforge.app.agent.AiClient
+import com.agentforge.app.agent.DialectAdapter
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
 import com.agentforge.app.security.RealFaceBiometricEngine
@@ -632,6 +634,10 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
     val context = LocalContext.current
     var assistantName by remember { mutableStateOf(prefs.name) }
     var wakeWord by remember { mutableStateOf(prefs.wakeWord) }
+    var voicePitch by remember { mutableFloatStateOf(prefs.customVoicePitch) }
+    var voiceSpeed by remember { mutableFloatStateOf(prefs.customVoiceSpeed) }
+    var isTestingTts by remember { mutableStateOf(false) }
+
     var faceLock by remember { mutableStateOf(prefs.isFaceLockEnabled) }
     var isFaceEnrolled by remember { mutableStateOf(prefs.isFaceEnrolled) }
     var showEnrollDialog by remember { mutableStateOf(false) }
@@ -650,7 +656,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
             value = assistantName,
             onValueChange = { assistantName = it; prefs.name = it },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Assistant Name") }
+            label = { Text("Companion Name") }
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
@@ -661,7 +667,52 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
         )
 
         Spacer(Modifier.height(18.dp))
-        ShimmerNeonText("High-Precision Biometric Face Lock", size = 16)
+        ShimmerNeonText("Mira Voice Studio & Acoustics", size = 16)
+        Spacer(Modifier.height(8.dp))
+
+        Box(Modifier.fillMaxWidth().neumorphicCard(14).padding(14.dp)) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = NeonBlueAccent)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Realistic Girl Voice Tuning", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
+                        Text("Adjust pitch & speed to match your favorite companion style", fontSize = 11.sp, color = Color.Gray)
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+                SliderItem("Voice Pitch (Acoustic Height)", voicePitch, 0.7f, 1.8f) {
+                    voicePitch = it
+                    prefs.customVoicePitch = it
+                }
+                SliderItem("Speech Pace (Flow Rate)", voiceSpeed, 0.7f, 1.5f) {
+                    voiceSpeed = it
+                    prefs.customVoiceSpeed = it
+                }
+
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        isTestingTts = true
+                        var previewTts: TextToSpeech? = null
+                        previewTts = TextToSpeech(context) { status ->
+                            if (status == TextToSpeech.SUCCESS) {
+                                DialectAdapter.applyRealisticGirlVoice(context, previewTts, "Haan Manish, suniye! Yeh meri nayi voice hai, aapko kaisi lagi?")
+                                previewTts?.speak("Haan Manish, suniye! Yeh meri nayi voice hai, aapko kaisi lagi?", TextToSpeech.QUEUE_FLUSH, null, "PREVIEW")
+                            }
+                            isTestingTts = false
+                        }
+                    }
+                ) {
+                    Text(if (isTestingTts) "Generating Voice..." else "Preview Voice (Sunke Dekho)")
+                }
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        ShimmerNeonText("Biometric Security Guard", size = 16)
         Spacer(Modifier.height(8.dp))
 
         Box(Modifier.fillMaxWidth().neumorphicCard(14).padding(14.dp)) {
@@ -672,7 +723,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                     Column(Modifier.weight(1f)) {
                         Text("Adaptive Facial Contours", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
                         Text(
-                            text = if (isFaceEnrolled) "Owner Enrolled • Stealth Unlock Ready" else "Not calibrated • Requires frontal face scan",
+                            text = if (isFaceEnrolled) "Owner Enrolled • Stealth Unlock Ready" else "Requires frontal face scan",
                             fontSize = 11.sp,
                             color = if (isFaceEnrolled) Color(0xFF00FF7F) else Color.Gray
                         )
@@ -813,7 +864,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
 @Composable
 private fun SliderItem(label: String, value: Float, min: Float, max: Float, onValueChange: (Float) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("$label: ${value.toInt()}", modifier = Modifier.weight(1f), fontSize = 12.sp, color = WhiteNeonBlue)
+        Text("$label: ${String.format(Locale.US, "%.2f", value)}", modifier = Modifier.weight(1f), fontSize = 12.sp, color = WhiteNeonBlue)
         Slider(value = value, onValueChange = onValueChange, valueRange = min..max, modifier = Modifier.weight(1.5f))
     }
 }

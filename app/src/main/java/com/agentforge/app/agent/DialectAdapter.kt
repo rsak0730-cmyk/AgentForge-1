@@ -1,52 +1,45 @@
 package com.agentforge.app.agent
 
+import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
+import com.agentforge.app.data.AppPrefs
 import java.util.Locale
 
 object DialectAdapter {
 
-    data class VoiceConfig(
-        val ttsLocale: Locale,
-        val ttsPitch: Float,
-        val ttsSpeechRate: Float
-    )
-
-    fun detectDialect(text: String): VoiceConfig {
+    fun applyRealisticGirlVoice(context: Context, tts: TextToSpeech?, text: String) {
+        if (tts == null) return
+        val prefs = AppPrefs(context)
         val lower = text.lowercase()
         val isBengali = lower.contains("kemon") || lower.contains("aacho") || lower.contains("bhalo") || lower.contains("korbo")
-        
-        return if (isBengali) {
-            VoiceConfig(Locale("bn", "IN"), 1.15f, 0.98f)
-        } else {
-            // High-natural expressive young female pitch
-            VoiceConfig(Locale("hi", "IN"), 1.22f, 1.02f)
-        }
-    }
 
-    /**
-     * Android TTS Engine me installed available female high-quality voices select karta hai
-     */
-    fun applyRealisticGirlVoice(tts: TextToSpeech?, text: String) {
-        if (tts == null) return
-        val config = detectDialect(text)
-        
+        val targetLocale = if (isBengali) Locale("bn", "IN") else Locale("hi", "IN")
+
         try {
-            tts.language = config.ttsLocale
-            tts.setPitch(config.ttsPitch)
-            tts.setSpeechRate(config.ttsSpeechRate)
+            tts.language = targetLocale
+            tts.setPitch(prefs.customVoicePitch)
+            tts.setSpeechRate(prefs.customVoiceSpeed)
 
-            // Scan and attach natural female voice pack from Google TTS engine
             val voices = tts.voices
             if (!voices.isNullOrEmpty()) {
-                val bestFemaleVoice: Voice? = voices.firstOrNull { voice ->
-                    val name = voice.name.lowercase()
-                    (name.contains("female") || name.contains("female") || name.contains("#female") || name.contains("hi-in-x-hie") || name.contains("en-in-x-end")) &&
-                            !voice.isNetworkConnectionRequired
-                } ?: voices.firstOrNull { it.locale.language == config.ttsLocale.language && it.name.lowercase().contains("female") }
+                val chosenVoiceName = prefs.selectedVoiceName
+                var matchedVoice: Voice? = null
 
-                if (bestFemaleVoice != null) {
-                    tts.voice = bestFemaleVoice
+                if (chosenVoiceName != "default_female") {
+                    matchedVoice = voices.firstOrNull { it.name.equals(chosenVoiceName, ignoreCase = true) }
+                }
+
+                if (matchedVoice == null) {
+                    matchedVoice = voices.firstOrNull { voice ->
+                        val name = voice.name.lowercase()
+                        (name.contains("female") || name.contains("#female") || name.contains("hi-in-x-hie") || name.contains("en-in-x-end")) &&
+                                !voice.isNetworkConnectionRequired
+                    } ?: voices.firstOrNull { it.locale.language == targetLocale.language && it.name.lowercase().contains("female") }
+                }
+
+                if (matchedVoice != null) {
+                    tts.voice = matchedVoice
                 }
             }
         } catch (_: Exception) {}

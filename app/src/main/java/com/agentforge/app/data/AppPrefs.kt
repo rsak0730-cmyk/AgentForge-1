@@ -11,7 +11,6 @@ class AppPrefs(context: Context) {
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
 
-    // Encrypted Hardware Storage for sensitive credentials
     private val securePrefs: SharedPreferences = EncryptedSharedPreferences.create(
         context,
         "agentforge_secure_prefs",
@@ -20,16 +19,14 @@ class AppPrefs(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
-    // Standard SharedPreferences for app layout, toggles & states
     private val prefs: SharedPreferences =
         context.getSharedPreferences("agentforge_prefs", Context.MODE_PRIVATE)
 
-    // ---------------- PERMANENT LONG-TERM MEMORY (JSON) ----------------
+    // ---------------- PERMANENT MEMORY & IDENTITY ----------------
     var agentMemories: String
         get() = prefs.getString("agent_memories", "{}") ?: "{}"
         set(v) = prefs.edit().putString("agent_memories", v).apply()
 
-    // ---------------- ASSISTANT IDENTITY & VOICE ----------------
     var name: String
         get() = prefs.getString("assistant_name", "Mira") ?: "Mira"
         set(v) = prefs.edit().putString("assistant_name", v).apply()
@@ -42,7 +39,20 @@ class AppPrefs(context: Context) {
         get() = prefs.getBoolean("is_sleeping", false)
         set(v) = prefs.edit().putBoolean("is_sleeping", v).apply()
 
-    // ---------------- AI API VAULT (ENCRYPTED) ----------------
+    // ---------------- CUSTOM VOICE STUDIO CONFIG ----------------
+    var customVoicePitch: Float
+        get() = prefs.getFloat("custom_voice_pitch", 1.25f)
+        set(v) = prefs.edit().putFloat("custom_voice_pitch", v).apply()
+
+    var customVoiceSpeed: Float
+        get() = prefs.getFloat("custom_voice_speed", 1.02f)
+        set(v) = prefs.edit().putFloat("custom_voice_speed", v).apply()
+
+    var selectedVoiceName: String
+        get() = prefs.getString("selected_voice_name", "default_female") ?: "default_female"
+        set(v) = prefs.edit().putString("selected_voice_name", v).apply()
+
+    // ---------------- AI API VAULT ----------------
     var provider: String
         get() = prefs.getString("ai_provider", "gemini") ?: "gemini"
         set(v) = prefs.edit().putString("ai_provider", v).apply()
@@ -59,7 +69,7 @@ class AppPrefs(context: Context) {
         get() = prefs.getString("ai_base_url", "https://generativelanguage.googleapis.com") ?: "https://generativelanguage.googleapis.com"
         set(v) = prefs.edit().putString("ai_base_url", v).apply()
 
-    // ---------------- BIOMETRIC FACE MESH LOCK ----------------
+    // ---------------- BIOMETRICS ----------------
     var isFaceLockEnabled: Boolean
         get() = prefs.getBoolean("face_lock_enabled", false)
         set(v) = prefs.edit().putBoolean("face_lock_enabled", v).apply()
@@ -72,7 +82,6 @@ class AppPrefs(context: Context) {
         get() = securePrefs.getString("registered_face_hash", "") ?: ""
         set(v) = securePrefs.edit().putString("registered_face_hash", v).apply()
 
-    // ---------------- VOICEPRINT ACOUSTIC BIOMETRICS ----------------
     var isVoiceprintEnrolled: Boolean
         get() = prefs.getBoolean("voiceprint_enrolled", false)
         set(v) = prefs.edit().putBoolean("voiceprint_enrolled", v).apply()
@@ -81,12 +90,11 @@ class AppPrefs(context: Context) {
         get() = securePrefs.getString("registered_voiceprint", "") ?: ""
         set(v) = securePrefs.edit().putString("registered_voiceprint", v).apply()
 
-    // Fix for VoiceprintManager unresolved reference
     var enrolledVoiceprint: String
         get() = registeredVoiceprint
         set(v) { registeredVoiceprint = v }
 
-    // ---------------- DYNAMIC ISLAND GEOMETRY & TOGGLES ----------------
+    // ---------------- DYNAMIC ISLAND ----------------
     var isIslandEnabled: Boolean
         get() = prefs.getBoolean("island_enabled", true)
         set(v) = prefs.edit().putBoolean("island_enabled", v).apply()
@@ -107,17 +115,7 @@ class AppPrefs(context: Context) {
         get() = prefs.getFloat("island_height", 42f)
         set(v) = prefs.edit().putFloat("island_height", v).apply()
 
-    // Fix for AgentAccessibilityService unresolved reference
     var islandRadius: Float
         get() = prefs.getFloat("island_radius", 24f)
         set(v) = prefs.edit().putFloat("island_radius", v).apply()
-
-    // ---------------- SYSTEM LEVEL FLAGS ----------------
-    var isAccessibilityEnabled: Boolean
-        get() = prefs.getBoolean("accessibility_enabled", false)
-        set(v) = prefs.edit().putBoolean("accessibility_enabled", v).apply()
-
-    var isShizukuPermitted: Boolean
-        get() = prefs.getBoolean("shizuku_permitted", false)
-        set(v) = prefs.edit().putBoolean("shizuku_permitted", v).apply()
 }

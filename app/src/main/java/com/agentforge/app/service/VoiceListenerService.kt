@@ -98,7 +98,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                 "Voice Automation Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Volume Button & Dynamic Island Voice Trigger"
+                description = "Hardware Voice Trigger Assistant"
                 setShowBadge(false)
             }
             getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
@@ -226,7 +226,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private fun speakResponse(text: String) {
         isSpeaking = true
 
-        DialectAdapter.applyRealisticGirlVoice(tts, text)
+        DialectAdapter.applyRealisticGirlVoice(this, tts, text)
 
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
