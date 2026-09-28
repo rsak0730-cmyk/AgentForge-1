@@ -67,7 +67,7 @@ class AgentAccessibilityService : AccessibilityService() {
     private lateinit var shizukuBridge: ShizukuBridge
     private lateinit var predictiveEngine: PredictiveActionEngine
 
-    // ---------------- VOLUME KEY HARDWARE TRIGGER STATE ----------------
+    // ---------------- VOLUME KEY HARDWARE TRIGGER ----------------
     private val keyHandler = Handler(Looper.getMainLooper())
     private var isVolumeUpPressed = false
     private var isHoldTriggered = false
@@ -120,10 +120,9 @@ class AgentAccessibilityService : AccessibilityService() {
                     if (!isVolumeUpPressed) {
                         isVolumeUpPressed = true
                         isHoldTriggered = false
-                        // 3 seconds hold countdown
+                        // 3 seconds hold threshold
                         keyHandler.postDelayed(longPressRunnable, 3000)
                     }
-                    // Prevent default system volume increment when active or held
                     return isHoldTriggered || isListeningActive
                 }
                 KeyEvent.ACTION_UP -> {
@@ -131,7 +130,6 @@ class AgentAccessibilityService : AccessibilityService() {
                     isVolumeUpPressed = false
 
                     if (!isHoldTriggered && isListeningActive) {
-                        // Single tap when already listening -> Stop
                         isListeningActive = false
                         triggerHaptic(false)
                         showIsland("🔇 Mic OFF")
@@ -382,6 +380,81 @@ class AgentAccessibilityService : AccessibilityService() {
                 visualizerBarView = null
             } catch (_: Throwable) {}
         }
+    }
+
+    // ---------------- IN-APP GESTURE & INTERACTION ENGINE ----------------
+
+    fun scrollForward(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val scrollable = findScrollableNode(root)
+        return if (scrollable != null) {
+            scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        } else {
+            swipeGesture(540f, 1600f, 540f, 400f)
+        }
+    }
+
+    fun scrollBackward(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val scrollable = findScrollableNode(root)
+        return if (scrollable != null) {
+            scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+        } else {
+            swipeGesture(540f, 400f, 540f, 1600f)
+        }
+    }
+
+    private fun swipeGesture(startX: Float, startY: Float, endX: Float, endY: Float): Boolean {
+        val path = Path().apply {
+            moveTo(startX, startY)
+            lineTo(endX, endY)
+        }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 250)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        return dispatchGesture(gesture, null, null)
+    }
+
+    private fun findScrollableNode(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (root == null) return null
+        if (root.isScrollable) return root
+        for (i in 0 until root.childCount) {
+            val child = findScrollableNode(root.getChild(i))
+            if (child != null) return child
+        }
+        return null
+    }
+
+    fun clickByTextOrDescription(keywords: List<String>): Boolean {
+        val root = rootInActiveWindow ?: return false
+        return searchAndClick(root, keywords)
+    }
+
+    private fun searchAndClick(node: AccessibilityNodeInfo?, keywords: List<String>): Boolean {
+        if (node == null) return false
+        val text = node.text?.toString()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+
+        val isMatch = keywords.any { k -> text.contains(k) || desc.contains(k) }
+        if (isMatch) {
+            var clickableNode: AccessibilityNodeInfo? = node
+            while (clickableNode != null && !clickableNode.isClickable) {
+                clickableNode = clickableNode.parent
+            }
+            if (clickableNode != null && clickableNode.isClickable) {
+                return clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            } else {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                if (rect.width() > 0 && rect.height() > 0) {
+                    return clickCoordinates(rect.centerX().toFloat(), rect.centerY().toFloat())
+                }
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            if (searchAndClick(node.getChild(i), keywords)) return true
+        }
+        return false
     }
 
     // ---------------- SCREEN INTERACTION & GROUNDING ----------------

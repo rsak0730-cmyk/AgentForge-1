@@ -82,7 +82,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_LISTENING -> {
-                startOnDemandListening()
+                startOnDemandListening(isFollowUp = false)
             }
             ACTION_STOP_LISTENING -> {
                 stopListeningManually()
@@ -98,7 +98,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                 "Voice Automation Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Volume Button Voice Trigger"
+                description = "Hardware Voice Trigger Assistant"
                 setShowBadge(false)
             }
             getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
@@ -125,15 +125,18 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun startOnDemandListening() {
+    fun startOnDemandListening(isFollowUp: Boolean = false) {
         if (isSpeaking) {
             tts?.stop()
             isSpeaking = false
         }
 
         cleanupRecognizer()
-        triggerTone(ToneGenerator.TONE_PROP_BEEP)
-        updateServiceNotification("🎙️ Listening... (Press Vol Up to Stop)")
+        if (!isFollowUp) {
+            triggerTone(ToneGenerator.TONE_PROP_BEEP)
+        }
+        updateServiceNotification("🎙️ Listening... (Boliye)")
+        AgentAccessibilityService.instance?.showIsland("🎙️ Listening...")
 
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
@@ -142,6 +145,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                 }
 
                 override fun onBeginningOfSpeech() {}
+
                 override fun onRmsChanged(rmsdB: Float) {
                     val bars = ((rmsdB + 2) / 2).toInt().coerceIn(1, 6)
                     AgentAccessibilityService.instance?.showIsland("Listening: ${"|".repeat(bars)}")
@@ -164,7 +168,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                     isListeningNow = false
                     cleanupRecognizer()
                     updateServiceNotification("Hardware Standby • Hold Vol Up 3s to Talk")
-                    AgentAccessibilityService.instance?.showIsland("Mic Standby")
+                    AgentAccessibilityService.instance?.showIsland("Standby")
                 }
 
                 override fun onResults(results: Bundle?) {
@@ -201,8 +205,8 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private fun handleSpokenCommand(spoken: String) {
         cleanupRecognizer()
         if (spoken.isBlank()) {
-            AgentAccessibilityService.instance?.showIsland("Koi aawaz nahi aayi")
             updateServiceNotification("Hardware Standby • Hold Vol Up 3s to Talk")
+            AgentAccessibilityService.instance?.showIsland("Standby")
             return
         }
 
@@ -222,10 +226,8 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private fun speakResponse(text: String) {
         isSpeaking = true
 
-        val dialect = DialectAdapter.detectDialect(text)
-        tts?.language = dialect.ttsLocale
-        tts?.setPitch(dialect.ttsPitch)
-        tts?.setSpeechRate(dialect.ttsSpeechRate)
+        // Apply Natural Female Voice Acoustic Profile
+        DialectAdapter.applyRealisticGirlVoice(tts, text)
 
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
@@ -235,8 +237,8 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             override fun onDone(utteranceId: String?) {
                 isSpeaking = false
                 mainHandler.post {
-                    updateServiceNotification("Hardware Standby • Hold Vol Up 3s to Talk")
-                    AgentAccessibilityService.instance?.showIsland("${prefs.name}: Standby")
+                    // HANDS-FREE FOLLOW UP: Response ke baad mic automatically dubara listen karega
+                    startOnDemandListening(isFollowUp = true)
                 }
             }
 
