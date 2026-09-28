@@ -21,7 +21,6 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -801,7 +800,7 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
             onEnrolled = {
                 isFaceEnrolled = true
                 showEnrollDialog = false
-                Toast.makeText(context, "Face Contour Saved!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Face Vector Saved!", Toast.LENGTH_SHORT).show()
             }
         )
     }
@@ -815,12 +814,13 @@ private fun SliderItem(label: String, value: Float, min: Float, max: Float, onVa
     }
 }
 
-// ---------------- CALIBRATION ENROLLMENT DIALOG ----------------
+// ---------------- SINGLE-LOCK CALIBRATION (NO OVERWRITE BUG) ----------------
 @Composable
 fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
     var statusText by remember { mutableStateOf("Look straight at the front camera") }
     var isCalibrated by remember { mutableStateOf(false) }
+    var lockedHash by remember { mutableStateOf<String?>(null) }
 
     val detectorOptions = remember {
         FaceDetectorOptions.Builder()
@@ -834,7 +834,7 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = NeuBackground,
-        title = { ShimmerNeonText("Enroll Owner Biometric Mesh", size = 18) },
+        title = { ShimmerNeonText("Enroll Owner Face", size = 18) },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(
@@ -859,25 +859,22 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
 
                                 imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
                                     val mediaImage = imageProxy.image
-                                    if (mediaImage != null) {
+                                    if (mediaImage != null && !isCalibrated) {
                                         val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
                                         detector.process(image)
                                             .addOnSuccessListener { faces ->
                                                 if (faces.isNotEmpty()) {
                                                     val face = faces[0]
-                                                    if (abs(face.headEulerAngleY) < 14f && abs(face.headEulerAngleX) < 14f) {
+                                                    if (abs(face.headEulerAngleY) < 8f && abs(face.headEulerAngleX) < 8f) {
                                                         val hash = RealFaceBiometricEngine.extractBiometricHash(face)
                                                         if (hash != null) {
-                                                            prefs.registeredFaceHash = hash
-                                                            prefs.isFaceEnrolled = true
+                                                            lockedHash = hash
                                                             isCalibrated = true
-                                                            statusText = "Face Contours Locked!"
+                                                            statusText = "Face Contours Locked! Ready to save."
                                                         }
                                                     } else {
                                                         statusText = "Hold head straight"
                                                     }
-                                                } else {
-                                                    statusText = "Looking for face..."
                                                 }
                                             }
                                             .addOnCompleteListener { imageProxy.close() }
@@ -906,8 +903,14 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
         },
         confirmButton = {
             Button(
-                enabled = isCalibrated,
-                onClick = onEnrolled
+                enabled = isCalibrated && lockedHash != null,
+                onClick = {
+                    lockedHash?.let {
+                        prefs.registeredFaceHash = it
+                        prefs.isFaceEnrolled = true
+                    }
+                    onEnrolled()
+                }
             ) { Text("Save Biometrics") }
         },
         dismissButton = {
@@ -916,13 +919,14 @@ fun RealFaceEnrollDialog(prefs: AppPrefs, onDismiss: () -> Unit, onEnrolled: () 
     )
 }
 
-// ---------------- STEALTH PHONE-STYLE ZERO-UI UNLOCK ----------------
+// ---------------- ZERO-UI STEALTH UNLOCK (NO 1PX SURFACE BUG) ----------------
 @Composable
 fun StealthFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    var scanStatus by remember { mutableStateOf("Recognizing...") }
+    val context = LocalContext.current
+    var scanStatus by remember { mutableStateOf("Authenticating...") }
     var scanMatched by remember { mutableStateOf(false) }
-    var successfulFrames by remember { mutableIntStateOf(0) }
+    var matchCounter by remember { mutableIntStateOf(0) }
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val lockScale by infiniteTransition.animateFloat(
@@ -946,6 +950,65 @@ fun StealthFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
 
     LaunchedEffect(Unit) {
         AgentAccessibilityService.instance?.showIsland("⟳ Scanning Face...")
+
+        // Android 15 Invisible Background Pipeline: No Preview Surface Needed
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        cameraProviderFuture.addListener({
+            val cameraProvider = cameraProviderFuture.get()
+            val imageAnalysis = ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+
+            imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                val mediaImage = imageProxy.image
+                if (mediaImage != null && !scanMatched) {
+                    val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                    detector.process(image)
+                        .addOnSuccessListener { faces ->
+                            if (faces.isNotEmpty()) {
+                                val face = faces[0]
+                                val currentHash = RealFaceBiometricEngine.extractBiometricHash(face)
+                                if (currentHash != null && prefs.registeredFaceHash.isNotEmpty()) {
+                                    val isMatch = RealFaceBiometricEngine.verifyFaces(prefs.registeredFaceHash, currentHash)
+                                    if (isMatch) {
+                                        matchCounter++
+                                        scanStatus = "Matching Biometrics..."
+                                        AgentAccessibilityService.instance?.showIsland("⚡ Verifying ($matchCounter/2)")
+                                        if (matchCounter >= 2) {
+                                            scanMatched = true
+                                            scanStatus = "Face Verified"
+                                            AgentAccessibilityService.instance?.showIsland("✓ Face Verified • Unlocked")
+                                            ContextCompat.getMainExecutor(context).execute {
+                                                onVerified()
+                                            }
+                                        }
+                                    } else {
+                                        matchCounter = 0
+                                        scanStatus = "Unauthorized Face"
+                                        AgentAccessibilityService.instance?.showIsland("⚠ Unauthorized Face")
+                                    }
+                                }
+                            } else {
+                                matchCounter = 0
+                                scanStatus = "Looking for face..."
+                                AgentAccessibilityService.instance?.showIsland("⟳ Scanning Face...")
+                            }
+                        }
+                        .addOnCompleteListener { imageProxy.close() }
+                } else {
+                    imageProxy.close()
+                }
+            }
+
+            try {
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(
+                    lifecycleOwner,
+                    CameraSelector.DEFAULT_FRONT_CAMERA,
+                    imageAnalysis
+                )
+            } catch (_: Exception) {}
+        }, ContextCompat.getMainExecutor(context))
     }
 
     Box(
@@ -954,78 +1017,6 @@ fun StealthFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
             .background(NeuBackground),
         contentAlignment = Alignment.Center
     ) {
-        // INVISIBLE 1x1 Camera Surface
-        Box(modifier = Modifier.size(1.dp).clip(CircleShape)) {
-            AndroidView(
-                factory = { ctx ->
-                    val previewView = PreviewView(ctx)
-                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                    cameraProviderFuture.addListener({
-                        val cameraProvider = cameraProviderFuture.get()
-                        val preview = Preview.Builder().build().also {
-                            it.setSurfaceProvider(previewView.surfaceProvider)
-                        }
-
-                        val imageAnalysis = ImageAnalysis.Builder()
-                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .build()
-
-                        imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                            val mediaImage = imageProxy.image
-                            if (mediaImage != null && !scanMatched) {
-                                val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                                detector.process(image)
-                                    .addOnSuccessListener { faces ->
-                                        if (faces.isNotEmpty()) {
-                                            val face = faces[0]
-                                            val currentHash = RealFaceBiometricEngine.extractBiometricHash(face)
-                                            if (currentHash != null && prefs.registeredFaceHash.isNotEmpty()) {
-                                                val isMatch = RealFaceBiometricEngine.verifyFaces(prefs.registeredFaceHash, currentHash)
-                                                if (isMatch) {
-                                                    successfulFrames++
-                                                    scanStatus = "Matching Biometrics..."
-                                                    AgentAccessibilityService.instance?.showIsland("⚡ Verifying ($successfulFrames/2)")
-                                                    
-                                                    // Instant unlock on 2 confirmed frames
-                                                    if (successfulFrames >= 2) {
-                                                        scanMatched = true
-                                                        scanStatus = "Face Verified"
-                                                        AgentAccessibilityService.instance?.showIsland("✓ Face Verified • Unlocked")
-                                                        ContextCompat.getMainExecutor(ctx).execute {
-                                                            onVerified()
-                                                        }
-                                                    }
-                                                } else {
-                                                    scanStatus = "Unauthorized Face"
-                                                    AgentAccessibilityService.instance?.showIsland("⚠ Unauthorized Face")
-                                                }
-                                            }
-                                        } else {
-                                            scanStatus = "Looking for face..."
-                                            AgentAccessibilityService.instance?.showIsland("⟳ Scanning Face...")
-                                        }
-                                    }
-                                    .addOnCompleteListener { imageProxy.close() }
-                            } else {
-                                imageProxy.close()
-                            }
-                        }
-
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(
-                            lifecycleOwner,
-                            CameraSelector.DEFAULT_FRONT_CAMERA,
-                            preview,
-                            imageAnalysis
-                        )
-                    }, ContextCompat.getMainExecutor(ctx))
-                    previewView
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        // MINIMALIST MOBILE HUD
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
@@ -1049,7 +1040,7 @@ fun StealthFaceUnlockScreen(prefs: AppPrefs, onVerified: () -> Unit) {
             Spacer(Modifier.height(28.dp))
             ShimmerNeonText(if (scanMatched) "Unlocked" else scanStatus, size = 18, weight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
-            Text("Hold device at eye level", fontSize = 12.sp, color = Color.Gray)
+            Text("Hold device naturally", fontSize = 12.sp, color = Color.Gray)
         }
     }
 }

@@ -31,7 +31,7 @@ object RealFaceBiometricEngine {
         val forehead = faceOval[0]
         val mouthCenter = computeCenter(upperLip)
 
-        // Robust normalized facial proportions (invariant to distance/scale)
+        // Scale & Distance Invariant Proportions
         val rEyeSpanToFaceWidth = eyeDistance / distance(faceOval[8], faceOval[28]).coerceAtLeast(1f)
         val rFaceHeight = distance(forehead, chin) / eyeDistance
         val rNoseToChin = distance(noseTip, chin) / eyeDistance
@@ -65,22 +65,20 @@ object RealFaceBiometricEngine {
 
             if (reg.size < 10 || cur.size < 10) return false
 
-            // Pose Angle constraint (allows natural everyday head tilt up to 25 degrees)
+            // Pose allowance
             val yawDiff = abs(reg[8] - cur[8])
             val pitchDiff = abs(reg[9] - cur[9])
-            if (yawDiff > 25f || pitchDiff > 22f) {
+            if (yawDiff > 24f || pitchDiff > 20f) {
                 return false
             }
 
             var sumSquared = 0.0
-            // Compare the 8 core facial biometric ratios
             for (i in 0 until 8) {
                 val diff = reg[i] - cur[i]
                 sumSquared += (diff * diff)
             }
             val euclideanDistance = sqrt(sumSquared)
 
-            // Optimized threshold: real owner matches reliably (~0.05 - 0.12), strangers fail (>0.18)
             euclideanDistance < 0.145f
         } catch (_: Exception) {
             false
