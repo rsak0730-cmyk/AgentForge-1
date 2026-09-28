@@ -1,10 +1,12 @@
 package com.agentforge.app
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -70,6 +72,7 @@ import com.agentforge.app.data.AppPrefs
 import com.agentforge.app.security.RealFaceBiometricEngine
 import com.agentforge.app.security.SecurityVault
 import com.agentforge.app.service.AgentAccessibilityService
+import com.agentforge.app.service.ScreenCaptureService
 import com.agentforge.app.service.VoiceListenerService
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
@@ -89,6 +92,21 @@ class MainActivity : ComponentActivity() {
     private lateinit var shizuku: ShizukuBridge
     private lateinit var vault: SecurityVault
 
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            ScreenCaptureService.setProjectionIntent(result.resultCode, result.data)
+            val intent = Intent(this, ScreenCaptureService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            Toast.makeText(this, "Screen Vision Activated!", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         vault = SecurityVault(this)
@@ -99,8 +117,17 @@ class MainActivity : ComponentActivity() {
         startVoiceBackgroundService()
 
         setContent {
-            AgentForgeApp(prefs, shizuku)
+            AgentForgeApp(
+                prefs = prefs,
+                shizuku = shizuku,
+                onRequestScreenVision = { requestScreenVisionPermission() }
+            )
         }
+    }
+
+    fun requestScreenVisionPermission() {
+        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        screenCaptureLauncher.launch(mgr.createScreenCaptureIntent())
     }
 
     private fun requestNeededPermissions() {
@@ -186,7 +213,11 @@ fun Modifier.neumorphicCard(cornerRadius: Int = 16): Modifier = this
     .border(1.dp, NeuLightShadow.copy(alpha = 0.45f), RoundedCornerShape(cornerRadius.dp))
 
 @Composable
-fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
+fun AgentForgeApp(
+    prefs: AppPrefs,
+    shizuku: ShizukuBridge,
+    onRequestScreenVision: () -> Unit
+) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var isAppUnlocked by remember { mutableStateOf(!prefs.isFaceLockEnabled || !prefs.isFaceEnrolled) }
 
@@ -227,7 +258,7 @@ fun AgentForgeApp(prefs: AppPrefs, shizuku: ShizukuBridge) {
                         0 -> ChatPage(prefs, shizuku)
                         1 -> ApiPage(prefs)
                         2 -> VoicemailPage()
-                        3 -> SettingsPage(prefs, shizuku)
+                        3 -> SettingsPage(prefs, shizuku, onRequestScreenVision)
                     }
                 }
             }
@@ -630,7 +661,11 @@ private fun VoicemailPage() {
 }
 
 @Composable
-private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
+private fun SettingsPage(
+    prefs: AppPrefs,
+    shizuku: ShizukuBridge,
+    onRequestScreenVision: () -> Unit
+) {
     val context = LocalContext.current
     var assistantName by remember { mutableStateOf(prefs.name) }
     var wakeWord by remember { mutableStateOf(prefs.wakeWord) }
@@ -707,6 +742,30 @@ private fun SettingsPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                     }
                 ) {
                     Text(if (isTestingTts) "Generating Voice..." else "Preview Voice (Sunke Dekho)")
+                }
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        ShimmerNeonText("Multi-Modal Screen Vision", size = 16)
+        Spacer(Modifier.height(8.dp))
+
+        Box(Modifier.fillMaxWidth().neumorphicCard(14).padding(14.dp)) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Visibility, contentDescription = null, tint = NeonBlueAccent)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Live Screen Eyes", fontWeight = FontWeight.Bold, color = WhiteNeonBlue)
+                        Text("Allows Mira to see screen, reels, memes & questions", fontSize = 11.sp, color = Color.Gray)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onRequestScreenVision
+                ) {
+                    Text("Grant Screen Vision Permission")
                 }
             }
         }

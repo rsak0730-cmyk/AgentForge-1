@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -45,6 +46,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private lateinit var engine: AgentEngine
     private lateinit var voiceprintManager: VoiceprintManager
     private lateinit var whitelistHelper: AppWhitelistHelper
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
@@ -55,6 +57,16 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     @Volatile
     private var isListeningNow = false
     private var isServiceAlive = true
+
+    // 4-Second Silence Timeout Runnable for follow-up mode
+    private val silenceTimeoutRunnable = Runnable {
+        if (isListeningNow && !isSpeaking) {
+            cleanupRecognizer()
+            updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
+            AgentAccessibilityService.instance?.showIsland("${prefs.name}: Standby")
+            releaseCpuWakeLock()
+        }
+    }
 
     companion object {
         const val ACTION_START_LISTENING = "com.agentforge.app.START_LISTENING"
@@ -74,6 +86,9 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85)
 
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AgentForge::VoiceWakeLock")
+
         whitelistHelper.ensureBackgroundSurvival()
         createNotificationChannel()
         updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
@@ -82,6 +97,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_LISTENING -> {
+                acquireCpuWakeLock()
                 startOnDemandListening(isFollowUp = false)
             }
             ACTION_STOP_LISTENING -> {
@@ -89,6 +105,22 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             }
         }
         return START_STICKY
+    }
+
+    private fun acquireCpuWakeLock() {
+        try {
+            if (wakeLock?.isHeld == false) {
+                wakeLock?.acquire(15000) // Max 15 seconds wake lock
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun releaseCpuWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (_: Exception) {}
     }
 
     private fun createNotificationChannel() {
@@ -132,11 +164,16 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
         }
 
         cleanupRecognizer()
+        mainHandler.removeCallbacks(silenceTimeoutRunnable)
+
         if (!isFollowUp) {
             triggerTone(ToneGenerator.TONE_PROP_BEEP)
         }
         updateServiceNotification("🎙️ Listening... (Boliye Manish)")
         AgentAccessibilityService.instance?.showIsland("🎙️ Listening...")
+
+        // Schedule 4-second strict safety timeout
+        mainHandler.postDelayed(silenceTimeoutRunnable, 4500)
 
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
@@ -144,7 +181,10 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                     isListeningNow = true
                 }
 
-                override fun onBeginningOfSpeech() {}
+                override fun onBeginningOfSpeech() {
+                    // User started speaking: cancel timeout
+                    mainHandler.removeCallbacks(silenceTimeoutRunnable)
+                }
 
                 override fun onRmsChanged(rmsdB: Float) {
                     val bars = ((rmsdB + 2) / 2).toInt().coerceIn(1, 6)
@@ -169,10 +209,12 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                     cleanupRecognizer()
                     updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
                     AgentAccessibilityService.instance?.showIsland("Standby")
+                    releaseCpuWakeLock()
                 }
 
                 override fun onResults(results: Bundle?) {
                     isListeningNow = false
+                    mainHandler.removeCallbacks(silenceTimeoutRunnable)
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val spoken = matches?.firstOrNull()?.trim() ?: ""
                     handleSpokenCommand(spoken)
@@ -193,13 +235,16 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             recognizer?.startListening(intent)
         } catch (_: Exception) {
             cleanupRecognizer()
+            releaseCpuWakeLock()
         }
     }
 
     private fun stopListeningManually() {
+        mainHandler.removeCallbacks(silenceTimeoutRunnable)
         cleanupRecognizer()
         triggerTone(ToneGenerator.TONE_PROP_ACK)
         updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
+        releaseCpuWakeLock()
     }
 
     private fun handleSpokenCommand(spoken: String) {
@@ -207,6 +252,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
         if (spoken.isBlank()) {
             updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
             AgentAccessibilityService.instance?.showIsland("Standby")
+            releaseCpuWakeLock()
             return
         }
 
@@ -236,7 +282,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             override fun onDone(utteranceId: String?) {
                 isSpeaking = false
                 mainHandler.post {
-                    // HANDS-FREE FOLLOW UP: Mic immediately opens again for continuous fluid conversation
+                    // HANDS-FREE FOLLOW UP WITH TIMEOUT PROTECTION
                     startOnDemandListening(isFollowUp = true)
                 }
             }
@@ -246,6 +292,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                 isSpeaking = false
                 mainHandler.post {
                     updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
+                    releaseCpuWakeLock()
                 }
             }
         })
@@ -274,6 +321,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
         job.cancel()
         mainHandler.removeCallbacksAndMessages(null)
         cleanupRecognizer()
+        releaseCpuWakeLock()
         toneGenerator?.release()
         tts?.shutdown()
         shizuku.close()
