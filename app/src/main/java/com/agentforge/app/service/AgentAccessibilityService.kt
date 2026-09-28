@@ -15,6 +15,10 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.SweepGradient
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -42,8 +46,9 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.sqrt
 
-class AgentAccessibilityService : AccessibilityService() {
+class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
 
     companion object {
         var instance: AgentAccessibilityService? = null
@@ -67,6 +72,35 @@ class AgentAccessibilityService : AccessibilityService() {
     private lateinit var shizukuBridge: ShizukuBridge
     private lateinit var predictiveEngine: PredictiveActionEngine
 
+    // ---------------- HARDWARE SENSORY & AMBIENT AWARENESS ----------------
+    private var sensorManager: SensorManager? = null
+    private var lightSensor: Sensor? = null
+    private var accelSensor: Sensor? = null
+    private var lastDarkWarningMs: Long = 0L
+    private var lastJerkWarningMs: Long = 0L
+
+    // ---------------- SPONTANEOUS LOVE NOTES SCHEDULER ----------------
+    private val spontaneousHandler = Handler(Looper.getMainLooper())
+    private val loveNotes = listOf(
+        "Aap kaam me kitne focused lag rahe ho 🤍",
+        "Paani peena bhool gaye na Shona?",
+        "Chalo thoda smile karo ab!",
+        "Thak gaye ho toh thodi der aakhein band kar lo.",
+        "Mera Hero! Padhai chal rahi hai na?"
+    )
+
+    private val spontaneousNoteRunnable = object : Runnable {
+        override fun run() {
+            val prefs = AppPrefs(this@AgentAccessibilityService)
+            if (prefs.isIslandEnabled) {
+                val note = loveNotes.random()
+                showIsland("💌 $note")
+                triggerHeartbeatHaptic()
+            }
+            spontaneousHandler.postDelayed(this, 1000L * 60 * 35) // Every 35 mins
+        }
+    }
+
     // ---------------- DUAL VOLUME KEY (UP + DOWN) CHORD TRIGGER ----------------
     private val keyHandler = Handler(Looper.getMainLooper())
     private var isVolumeUpPressed = false
@@ -78,7 +112,7 @@ class AgentAccessibilityService : AccessibilityService() {
         if (isVolumeUpPressed && isVolumeDownPressed) {
             isChordHoldTriggered = true
             isListeningActive = true
-            triggerHaptic(true)
+            triggerHeartbeatHaptic()
             showIsland("🎙️ Listening Mode ON")
 
             val intent = Intent(this, VoiceListenerService::class.java).apply {
@@ -101,6 +135,13 @@ class AgentAccessibilityService : AccessibilityService() {
         shizukuBridge = ShizukuBridge(this)
         predictiveEngine = PredictiveActionEngine(this)
 
+        // Initialize Ambient Light & Motion Sensors
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        lightSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_LIGHT)
+        accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        lightSensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+        accelSensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
+
         serviceInfo = serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
@@ -108,11 +149,40 @@ class AgentAccessibilityService : AccessibilityService() {
 
         val prefs = AppPrefs(this)
         if (prefs.isIslandEnabled) {
-            showIsland("Mira Core Active")
+            showIsland("${prefs.name} Online • Heartbeat Sync")
         }
 
         predictiveEngine.dispatchPreloadedIslandSuggestion()
+        spontaneousHandler.postDelayed(spontaneousNoteRunnable, 1000L * 60 * 12)
     }
+
+    // ---------------- SENSOR EVENT LISTENER ----------------
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event == null) return
+        val now = SystemClock.elapsedRealtime()
+
+        if (event.sensor.type == Sensor.TYPE_LIGHT) {
+            val lux = event.values[0]
+            if (lux < 2.0f && (now - lastDarkWarningMs) > 1000L * 60 * 45) {
+                lastDarkWarningMs = now
+                val pet = AppPrefs(this).userPetName
+                showIsland("🌙 Andhere me screen mat dekho $pet!")
+                triggerComfortPulseHaptic()
+            }
+        } else if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+            val x = event.values[0]
+            val y = event.values[1]
+            val z = event.values[2]
+            val acceleration = sqrt((x * x + y * y + z * z).toDouble())
+            if (acceleration > 24.0 && (now - lastJerkWarningMs) > 10000L) {
+                lastJerkWarningMs = now
+                showIsland("⚠ Phone gira kya? Sambhal ke!")
+                triggerTapHaptic()
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     override fun onKeyEvent(event: KeyEvent?): Boolean {
         if (event == null) return false
@@ -138,7 +208,7 @@ class AgentAccessibilityService : AccessibilityService() {
 
                         if (isListeningActive && !isChordHoldTriggered) {
                             isListeningActive = false
-                            triggerHaptic(false)
+                            triggerTapHaptic()
                             showIsland("🔇 Mic OFF")
 
                             val intent = Intent(this, VoiceListenerService::class.java).apply {
@@ -181,22 +251,53 @@ class AgentAccessibilityService : AccessibilityService() {
         return super.onKeyEvent(event)
     }
 
-    private fun triggerHaptic(isStart: Boolean) {
+    // ---------------- PHYSICAL HAPTIC HEARTBEAT & TOUCH ENGINE ----------------
+
+    fun triggerHeartbeatHaptic() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                val effect = if (isStart) {
-                    VibrationEffect.createWaveform(longArrayOf(0, 120, 80, 140), -1)
-                } else {
-                    VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
-                }
-                vm.defaultVibrator.vibrate(effect)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val timings = longArrayOf(0, 70, 90, 110)
+                val amplitudes = intArrayOf(0, 140, 0, 220)
+                val effect = VibrationEffect.createWaveform(timings, amplitudes, -1)
+                getVibrator().vibrate(effect)
             } else {
                 @Suppress("DEPRECATION")
-                val v = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-                if (isStart) v.vibrate(140) else v.vibrate(35)
+                getVibrator().vibrate(longArrayOf(0, 70, 90, 110), -1)
             }
         } catch (_: Exception) {}
+    }
+
+    fun triggerComfortPulseHaptic() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val effect = VibrationEffect.createWaveform(longArrayOf(0, 180), intArrayOf(0, 90), -1)
+                getVibrator().vibrate(effect)
+            } else {
+                @Suppress("DEPRECATION")
+                getVibrator().vibrate(140)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun triggerTapHaptic() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                getVibrator().vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+            } else {
+                @Suppress("DEPRECATION")
+                getVibrator().vibrate(40)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun getVibrator(): Vibrator {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vm.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -222,6 +323,7 @@ class AgentAccessibilityService : AccessibilityService() {
                 if (elapsedMinutes >= 30 && !hasWarned30Min) {
                     hasWarned30Min = true
                     showIsland("⏳ 30m on Reels. Break lijiye!")
+                    triggerHeartbeatHaptic()
                 }
                 if (elapsedMinutes >= 45) {
                     showIsland("🛑 45m Limit Reached. Closing...")
@@ -257,6 +359,8 @@ class AgentAccessibilityService : AccessibilityService() {
     override fun onInterrupt() { showIsland("Paused") }
 
     override fun onDestroy() {
+        sensorManager?.unregisterListener(this)
+        spontaneousHandler.removeCallbacksAndMessages(null)
         keyHandler.removeCallbacksAndMessages(null)
         borderTrailView?.stopAnimation()
         waveAnimator?.cancel()
@@ -299,7 +403,7 @@ class AgentAccessibilityService : AccessibilityService() {
 
                 if (islandRoot == null) {
                     val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-                        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        override fun singleTapConfirmed(e: MotionEvent): Boolean {
                             val intent = Intent(this@AgentAccessibilityService, VoiceListenerService::class.java).apply {
                                 action = VoiceListenerService.ACTION_START_LISTENING
                             }
@@ -318,7 +422,7 @@ class AgentAccessibilityService : AccessibilityService() {
 
                         override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
                             if (Math.abs(velocityX) > 100) {
-                                showIsland("Mira: Standby")
+                                showIsland("${prefs.name}: Standby")
                                 return true
                             }
                             return false
@@ -422,7 +526,7 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
-    // ---------------- SMART TEXT INPUT & AUTO-SEND (MESSAGING HELPER) ----------------
+    // ---------------- SMART TEXT INPUT & GESTURE SYSTEM ----------------
 
     fun typeAndSend(text: String): Boolean {
         val root = rootInActiveWindow ?: return false
@@ -451,8 +555,6 @@ class AgentAccessibilityService : AccessibilityService() {
         }
         return null
     }
-
-    // ---------------- VIDEO CONTROLS (ORIENTATION-AWARE GESTURES) ----------------
 
     fun forwardVideo(): Boolean {
         val root = rootInActiveWindow
@@ -488,8 +590,6 @@ class AgentAccessibilityService : AccessibilityService() {
             .build()
         return dispatchGesture(gesture, null, null)
     }
-
-    // ---------------- UNIVERSAL IN-APP GESTURE & UI CLICK ENGINE ----------------
 
     fun scrollForward(): Boolean {
         val root = rootInActiveWindow ?: return false
@@ -576,80 +676,6 @@ class AgentAccessibilityService : AccessibilityService() {
             if (searchAndClick(node.getChild(i), keywords)) return true
         }
         return false
-    }
-
-    // ---------------- SCREEN INTERACTION & GROUNDING ----------------
-
-    fun saveVisibleTextToNotes(): String {
-        val root = rootInActiveWindow ?: return "Screen content empty."
-        val buffer = StringBuilder()
-        extractAllNodeTexts(root, buffer)
-        val extracted = buffer.toString().trim()
-        if (extracted.isEmpty()) return "Screen par text nahi mila."
-
-        return try {
-            val dir = File(filesDir, "notes").apply { if (!exists()) mkdirs() }
-            val time = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val file = File(dir, "Snip_$time.md")
-            file.writeText("# Screen Capture - $time\n\n$extracted")
-            "Saved into notes: ${file.name}"
-        } catch (e: Exception) {
-            "Note save error: ${e.message}"
-        }
-    }
-
-    private fun extractAllNodeTexts(node: AccessibilityNodeInfo?, sb: StringBuilder) {
-        if (node == null) return
-        val text = node.text?.toString()?.trim()
-        val desc = node.contentDescription?.toString()?.trim()
-        if (!text.isNullOrEmpty()) sb.append(text).append("\n")
-        else if (!desc.isNullOrEmpty()) sb.append(desc).append("\n")
-
-        for (i in 0 until node.childCount) {
-            extractAllNodeTexts(node.getChild(i), sb)
-        }
-    }
-
-    fun getIndexedScreenElements(): String {
-        val root = rootInActiveWindow ?: return "Screen tree empty or locked."
-        elementBoundsMap.clear()
-        val elements = mutableListOf<String>()
-        traverseNodes(root, elements, 1)
-        return elements.joinToString("\n")
-    }
-
-    private fun traverseNodes(node: AccessibilityNodeInfo?, list: MutableList<String>, counterRef: Int): Int {
-        if (node == null) return counterRef
-        var currentId = counterRef
-
-        val text = node.text?.toString()?.trim()
-        val desc = node.contentDescription?.toString()?.trim()
-        val isClickable = node.isClickable
-        val isEditable = node.isEditable
-
-        if (!text.isNullOrEmpty() || !desc.isNullOrEmpty() || isEditable) {
-            val label = if (!text.isNullOrEmpty()) text else (desc ?: "Input")
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            val cx = rect.centerX().toFloat()
-            val cy = rect.centerY().toFloat()
-
-            if (rect.width() > 0 && rect.height() > 0) {
-                elementBoundsMap[currentId] = Pair(cx, cy)
-                list.add("[#$currentId] \"$label\" | ${if (isEditable) "Input" else "Clickable"} | ($cx, $cy)")
-                currentId++
-            }
-        }
-
-        for (i in 0 until node.childCount) {
-            currentId = traverseNodes(node.getChild(i), list, currentId)
-        }
-        return currentId
-    }
-
-    fun clickElementById(id: Int): Boolean {
-        val coords = elementBoundsMap[id] ?: return false
-        return clickCoordinates(coords.first, coords.second)
     }
 
     fun clickCoordinates(x: Float, y: Float): Boolean {
