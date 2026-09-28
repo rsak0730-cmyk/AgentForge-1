@@ -45,6 +45,7 @@ android {
 
     buildFeatures {
         compose = true
+        aidl = true
     }
 
     packaging {
@@ -69,14 +70,17 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // CameraX (Front Camera & Real-Time Biometric Analysis)
+    // OkHttp (Fix for AiClient Unresolved Reference)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // CameraX
     val cameraxVersion = "1.3.4"
     implementation("androidx.camera:camera-core:$cameraxVersion")
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
 
-    // Google ML Kit (Real Face Biometric Landmark Detection)
+    // Google ML Kit Face Detection
     implementation("com.google.mlkit:face-detection:16.1.7")
 
     // Shizuku Privileged Shell API
@@ -84,10 +88,8 @@ dependencies {
     implementation("dev.rikka.shizuku:api:$shizukuVersion")
     implementation("dev.rikka.shizuku:provider:$shizukuVersion")
 
-    // Kotlin Coroutines
+    // Coroutines & Security Keystore
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-
-    // Security & Encrypted Keystore
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // Testing
@@ -95,7 +97,4 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation(composeBom)
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-    debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
