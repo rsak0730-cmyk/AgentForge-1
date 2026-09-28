@@ -1,5 +1,6 @@
 package com.agentforge.app.agent
 
+import android.util.Base64
 import com.agentforge.app.data.AppPrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,10 +20,10 @@ class AiClient(private val prefs: AppPrefs) {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    suspend fun ask(prompt: String): String = withContext(Dispatchers.IO) {
+    suspend fun ask(prompt: String, screenBytes: ByteArray? = null): String = withContext(Dispatchers.IO) {
         val apiKey = prefs.key.trim()
         if (apiKey.isBlank()) {
-            return@withContext """{"thought":"No API Key","action":"CHAT","param":"","remember_key":"","remember_value":"","reply":"API Key configure nahi hai. Pehle API tab me jakar valid key save karein."}"""
+            return@withContext """{"thought":"No API Key","action":"CHAT","param":"","remember_key":"","remember_value":"","reply":"API Key configure nahi hai Manish. Settings me jakar apni key save karo na."}"""
         }
 
         val provider = prefs.provider.lowercase().trim()
@@ -33,22 +34,21 @@ class AiClient(private val prefs: AppPrefs) {
 
         try {
             when (provider) {
-                "gemini" -> callGemini(apiKey, model, prompt)
+                "gemini" -> callGemini(apiKey, model, prompt, screenBytes)
                 "openai", "openrouter" -> callOpenAiCompatible(apiKey, model, prompt)
-                else -> callGemini(apiKey, "gemini-2.5-flash", prompt)
+                else -> callGemini(apiKey, "gemini-2.5-flash", prompt, screenBytes)
             }
         } catch (e: Exception) {
-            // Fallback for model mismatch: retry once with standard stable model
             if (provider == "gemini" && model != "gemini-2.5-flash") {
                 try {
-                    return@withContext callGemini(apiKey, "gemini-2.5-flash", prompt)
+                    return@withContext callGemini(apiKey, "gemini-2.5-flash", prompt, screenBytes)
                 } catch (_: Exception) {}
             }
-            """{"thought":"API Error","action":"CHAT","param":"","remember_key":"","remember_value":"","reply":"API Error aayi: ${e.message ?: "Connection failed"}"}"""
+            """{"thought":"API Error","action":"CHAT","param":"","remember_key":"","remember_value":"","reply":"Network me thodi problem aa gayi Manish: ${e.message ?: "Connection failed"}"}"""
         }
     }
 
-    private fun callGemini(apiKey: String, model: String, prompt: String): String {
+    private fun callGemini(apiKey: String, model: String, prompt: String, screenBytes: ByteArray?): String {
         val cleanBase = prefs.baseUrl.trim().removeSuffix("/")
         val targetModel = if (model.contains("3.")) "gemini-2.5-flash" else model
         val url = "$cleanBase/v1beta/models/$targetModel:generateContent?key=$apiKey"
@@ -57,7 +57,18 @@ class AiClient(private val prefs: AppPrefs) {
             val contentsArray = JSONArray().apply {
                 val contentObj = JSONObject().apply {
                     val partsArray = JSONArray().apply {
+                        // 1. Text Prompt Part
                         put(JSONObject().apply { put("text", prompt) })
+
+                        // 2. Multimodal Screen Vision Image Part (if captured)
+                        if (screenBytes != null && screenBytes.isNotEmpty()) {
+                            val base64Data = Base64.encodeToString(screenBytes, Base64.NO_WRAP)
+                            val inlineData = JSONObject().apply {
+                                put("mime_type", "image/jpeg")
+                                put("data", base64Data)
+                            }
+                            put(JSONObject().apply { put("inline_data", inlineData) })
+                        }
                     }
                     put("parts", partsArray)
                 }

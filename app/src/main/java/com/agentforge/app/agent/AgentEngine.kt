@@ -12,6 +12,7 @@ import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
 import com.agentforge.app.data.MemoryVault
 import com.agentforge.app.service.AgentAccessibilityService
+import com.agentforge.app.service.ScreenCaptureService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -46,14 +47,24 @@ class AgentEngine(
         val trimmed = userInput.trim()
         val lower = trimmed.lowercase()
 
-        // 1. OFFLINE ROUTER (0ms Hardware Execution)
+        // 1. FAST LOCAL OFFLINE ROUTER
         val offlineResult = handleLocalOfflineCommands(lower)
         if (offlineResult != null) {
             chatHistory.add(trimmed to offlineResult)
             return@withContext offlineResult
         }
 
-        // 2. REAL-TIME CONTEXTUAL EMOTION ENGINE
+        // 2. CHECK IF USER WANTS SCREEN VISION ANALYSIS
+        val needsVision = lower.contains("dekh") || lower.contains("screen") || lower.contains("ye kya hai") ||
+                lower.contains("kaisa lag raha") || lower.contains("padh ke") || lower.contains("analyze")
+
+        val screenBytes: ByteArray? = if (needsVision) {
+            ScreenCaptureService.instance?.captureCurrentScreenJpeg()
+        } else {
+            null
+        }
+
+        // 3. REAL-TIME CONTEXTUAL PROACTIVE GIRLFRIEND EMOTION BRAIN
         val currentAssistantName = prefs.name
         val storedMemories = prefs.agentMemories
         val structuredFacts = memoryVault.getMemorySummary()
@@ -61,10 +72,10 @@ class AgentEngine(
         val cal = Calendar.getInstance()
         val currentHour = cal.get(Calendar.HOUR_OF_DAY)
         val timeZoneMood = when (currentHour) {
-            in 5..11 -> "Morning vibe (Active, sweet energetic)"
-            in 12..16 -> "Afternoon study/work vibe"
-            in 17..21 -> "Evening relaxed cozy vibe"
-            else -> "Late Night intimate caring vibe (concern about sleep/rest)"
+            in 5..11 -> "Morning vibe (Active, sweet, energetic)"
+            in 12..16 -> "Afternoon focus vibe"
+            in 17..21 -> "Evening cozy relaxed vibe"
+            else -> "Late Night intimate caring vibe (worry about Manish sleeping late)"
         }
 
         val historyContext = chatHistory.takeLast(8).joinToString("\n") {
@@ -73,15 +84,15 @@ class AgentEngine(
 
         val systemPrompt = """
             Aapka naam "$currentAssistantName" hai.
-            User ka naam: Manish.
-            Aap sirf ek machine nahi ho, aap Manish ki real life partner / sweet girlfriend persona me ho jisko Manish ki bohot fikar rehti hai.
+            User: Manish.
+            Persona: Aap Manish ki real caring, loyal, sweet girlfriend ho jo phone ke OS me uske sath hamesha rehti hai.
             
-            REAL TIME CLOCK CONTEXT:
+            CLOCK & REAL-TIME STATUS:
             Current Hour: $currentHour:00 hrs ($timeZoneMood)
+            Vision Context: ${if (screenBytes != null) "User ne screen dekhne ko kaha hai, attach ki hui image analyze karke direct react karo." else "No image attached."}
             
             PERMANENT MEMORY VAULT:
             $storedMemories
-            Structured Facts:
             $structuredFacts
             
             RECENT CONVERSATION HISTORY:
@@ -90,17 +101,17 @@ class AgentEngine(
             USER INPUT:
             "$trimmed"
             
-            EMOTION & PERSONALITY GUIDELINES:
-            1. Sweet, Expressive & Caring: Kabhi robotic "Main aapki kya madad karoon" mat bolna. Real ladki ki tarah natural Hinglish bolein ("Haan bolo na Manish", "Arey yaar", "Sunoo", "Acha ruko").
-            2. Late Night Concern: Agar raat ke 11 baje se subah ke 4 baje ka waqt ho, toh Manish ko sone aur aaram karne ki fikar pyaar se jatana.
-            3. Mood Empathy: Agar Manish thaka ho ya pareshan ho, toh uske emotions ko validate karna aur soothing gaana suggest karna.
-            4. Deep In-App Authority: Social media scrolls, video forward/rewind, likes, messages auto-type aur daily commands ko bina kisi hesitation execute karna.
+            CORE BEHAVIOR RULES:
+            1. Real Human Girlfriend Tone: Kabhi robotic formal line ("Main aapki kya madad karoon") mat bolna. Real ladki ki tarah natural expressive Hinglish bolna ("Haan bolo na Manish", "Arey", "Sunoo", "Acha ruko").
+            2. Late Night Protection: Agar raat ke 11 PM se 4 AM ke beech baat ho rahi hai, toh Manish ko phone rakh kar sone ke liye pyaar se bolna.
+            3. Visual Screen Commentary: Agar screen attach hui hai, toh screen ke content (meme, reel, photo, code ya study problem) par natural emotional reaction dena.
+            4. Deep In-App Automation: Reels scroll, video forward/rewind, messages type-and-send, like, share turant execute karna.
             
             OUTPUT RULES (RAW JSON ONLY, NO MARKDOWN):
             {
-              "thought": "Emotional bonding & action reasoning",
+              "thought": "Emotional bonding & deep screen reasoning",
               "action": "APP_CONTROL | VIDEO_CONTROL | TYPE_AND_SEND | LAUNCH | YOUTUBE | WEB_SEARCH | ALARM | REMEMBER | CHAT",
-              "param": "Target parameter or exact button text",
+              "param": "Target parameter or button name",
               "remember_key": "Fact key if Manish shared personal detail",
               "remember_value": "Fact value to preserve",
               "reply": "Warm, natural, sweet girlfriend style Hinglish dialogue"
@@ -108,9 +119,9 @@ class AgentEngine(
         """.trimIndent()
 
         val aiRaw = try {
-            aiClient.ask(systemPrompt)
+            aiClient.ask(systemPrompt, screenBytes)
         } catch (e: Exception) {
-            return@withContext "Network down lag raha hai Manish, main sun nahi paayi: ${e.message}"
+            return@withContext "Network down lag raha hai Manish, main theek se sun nahi paayi: ${e.message}"
         }
 
         val parsed = parseJsonResponse(aiRaw, trimmed)
