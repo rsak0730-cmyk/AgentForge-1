@@ -232,7 +232,7 @@ class AgentAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    // ---------------- DYNAMIC ISLAND ENGINE ----------------
+    // ---------------- DYNAMIC ISLAND ENGINE (TOUCH INTERACTIVE) ----------------
 
     fun updateIslandGeometry() {
         Handler(Looper.getMainLooper()).post {
@@ -264,17 +264,24 @@ class AgentAccessibilityService : AccessibilityService() {
 
                 if (islandRoot == null) {
                     val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                            // Touch toggle: Mic active listening on/off
+                            val intent = Intent(this@AgentAccessibilityService, VoiceListenerService::class.java).apply {
+                                action = VoiceListenerService.ACTION_START_LISTENING
+                            }
+                            startService(intent)
+                            showIsland("🎙️ Mic Opened")
+                            return true
+                        }
+
                         override fun onDoubleTap(e: MotionEvent): Boolean {
                             val intent = Intent(this@AgentAccessibilityService, MainActivity::class.java).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                             }
                             startActivity(intent)
-                            showIsland("Mic Activated")
                             return true
                         }
-                        override fun onLongPress(e: MotionEvent) {
-                            showIsland("Camera Vision Mode")
-                        }
+
                         override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
                             if (Math.abs(velocityX) > 100) {
                                 showIsland("Mira: Standby")
@@ -381,15 +388,44 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
-    // ---------------- VIDEO CONTROLS (FORWARD & REWIND GESTURES) ----------------
+    // ---------------- SMART TEXT INPUT & AUTO-SEND (MESSAGING HELPER) ----------------
+
+    fun typeAndSend(text: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: findFirstEditableNode(root)
+        if (focused != null) {
+            val bundle = Bundle()
+            bundle.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+            val success = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
+
+            if (success) {
+                // Wait briefly and tap "Send" button
+                Handler(Looper.getMainLooper()).postDelayed({
+                    clickByTextOrDescription(listOf("send", "bhejo", "submit", "enter"))
+                }, 400)
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun findFirstEditableNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val found = findFirstEditableNode(node.getChild(i))
+            if (found != null) return found
+        }
+        return null
+    }
+
+    // ---------------- VIDEO CONTROLS (ORIENTATION-AWARE GESTURES) ----------------
 
     fun forwardVideo(): Boolean {
-        // Look for native fast forward node first
         val root = rootInActiveWindow
         if (root != null && clickByTextOrDescription(listOf("fast forward", "forward 10 seconds", "seek forward"))) {
             return true
         }
-        // Fallback: Double tap on right side of video player (75% X, 40% Y)
         val metrics = resources.displayMetrics
         val targetX = metrics.widthPixels * 0.78f
         val targetY = metrics.heightPixels * 0.35f
@@ -397,12 +433,10 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     fun rewindVideo(): Boolean {
-        // Look for native rewind node first
         val root = rootInActiveWindow
         if (root != null && clickByTextOrDescription(listOf("rewind", "rewind 10 seconds", "seek backward"))) {
             return true
         }
-        // Fallback: Double tap on left side of video player (25% X, 40% Y)
         val metrics = resources.displayMetrics
         val targetX = metrics.widthPixels * 0.22f
         val targetY = metrics.heightPixels * 0.35f
@@ -412,7 +446,6 @@ class AgentAccessibilityService : AccessibilityService() {
     private fun doubleTapCoordinates(x: Float, y: Float): Boolean {
         val path1 = Path().apply { moveTo(x, y) }
         val stroke1 = GestureDescription.StrokeDescription(path1, 0, 50)
-
         val path2 = Path().apply { moveTo(x, y) }
         val stroke2 = GestureDescription.StrokeDescription(path2, 100, 50)
 
@@ -431,7 +464,11 @@ class AgentAccessibilityService : AccessibilityService() {
         return if (scrollable != null) {
             scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
         } else {
-            swipeGesture(540f, 1600f, 540f, 400f)
+            val metrics = resources.displayMetrics
+            val cx = metrics.widthPixels / 2f
+            val startY = metrics.heightPixels * 0.8f
+            val endY = metrics.heightPixels * 0.2f
+            swipeGesture(cx, startY, cx, endY)
         }
     }
 
@@ -441,7 +478,11 @@ class AgentAccessibilityService : AccessibilityService() {
         return if (scrollable != null) {
             scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
         } else {
-            swipeGesture(540f, 400f, 540f, 1600f)
+            val metrics = resources.displayMetrics
+            val cx = metrics.widthPixels / 2f
+            val startY = metrics.heightPixels * 0.2f
+            val endY = metrics.heightPixels * 0.8f
+            swipeGesture(cx, startY, cx, endY)
         }
     }
 
@@ -536,6 +577,43 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
+    fun getIndexedScreenElements(): String {
+        val root = rootInActiveWindow ?: return "Screen tree empty or locked."
+        elementBoundsMap.clear()
+        val elements = mutableListOf<String>()
+        traverseNodes(root, elements, 1)
+        return elements.joinToString("\n")
+    }
+
+    private fun traverseNodes(node: AccessibilityNodeInfo?, list: MutableList<String>, counterRef: Int): Int {
+        if (node == null) return counterRef
+        var currentId = counterRef
+
+        val text = node.text?.toString()?.trim()
+        val desc = node.contentDescription?.toString()?.trim()
+        val isClickable = node.isClickable
+        val isEditable = node.isEditable
+
+        if (!text.isNullOrEmpty() || !desc.isNullOrEmpty() || isEditable) {
+            val label = if (!text.isNullOrEmpty()) text else (desc ?: "Input")
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            val cx = rect.centerX().toFloat()
+            val cy = rect.centerY().toFloat()
+
+            if (rect.width() > 0 && rect.height() > 0) {
+                elementBoundsMap[currentId] = Pair(cx, cy)
+                list.add("[#$currentId] \"$label\" | ${if (isEditable) "Input" else "Clickable"} | ($cx, $cy)")
+                currentId++
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            currentId = traverseNodes(node.getChild(i), list, currentId)
+        }
+        return currentId
+    }
+
     fun clickElementById(id: Int): Boolean {
         val coords = elementBoundsMap[id] ?: return false
         return clickCoordinates(coords.first, coords.second)
@@ -546,18 +624,6 @@ class AgentAccessibilityService : AccessibilityService() {
         val stroke = GestureDescription.StrokeDescription(path, 0, 80)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return dispatchGesture(gesture, null, null)
-    }
-
-    fun typeTextIntoFocusedOrById(targetId: Int?, textToType: String): Boolean {
-        if (targetId != null && targetId in elementBoundsMap) {
-            clickElementById(targetId)
-            Thread.sleep(300)
-        }
-        val root = rootInActiveWindow ?: return false
-        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
-        val bundle = Bundle()
-        bundle.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToType)
-        return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
     }
 }
 

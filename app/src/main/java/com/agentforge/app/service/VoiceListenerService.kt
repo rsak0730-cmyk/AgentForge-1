@@ -76,7 +76,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
 
         whitelistHelper.ensureBackgroundSurvival()
         createNotificationChannel()
-        updateServiceNotification("Hardware Standby • Hold Vol Up 3s to Talk")
+        updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -98,7 +98,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                 "Voice Automation Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Hardware Voice Trigger Assistant"
+                description = "Volume Button & Dynamic Island Voice Trigger"
                 setShowBadge(false)
             }
             getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
@@ -135,7 +135,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
         if (!isFollowUp) {
             triggerTone(ToneGenerator.TONE_PROP_BEEP)
         }
-        updateServiceNotification("🎙️ Listening... (Boliye)")
+        updateServiceNotification("🎙️ Listening... (Boliye Manish)")
         AgentAccessibilityService.instance?.showIsland("🎙️ Listening...")
 
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
@@ -167,7 +167,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                 override fun onError(error: Int) {
                     isListeningNow = false
                     cleanupRecognizer()
-                    updateServiceNotification("Hardware Standby • Hold Vol Up 3s to Talk")
+                    updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
                     AgentAccessibilityService.instance?.showIsland("Standby")
                 }
 
@@ -199,13 +199,13 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private fun stopListeningManually() {
         cleanupRecognizer()
         triggerTone(ToneGenerator.TONE_PROP_ACK)
-        updateServiceNotification("Hardware Standby • Hold Vol Up 3s to Talk")
+        updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
     }
 
     private fun handleSpokenCommand(spoken: String) {
         cleanupRecognizer()
         if (spoken.isBlank()) {
-            updateServiceNotification("Hardware Standby • Hold Vol Up 3s to Talk")
+            updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
             AgentAccessibilityService.instance?.showIsland("Standby")
             return
         }
@@ -226,7 +226,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private fun speakResponse(text: String) {
         isSpeaking = true
 
-        // Apply Natural Female Voice Acoustic Profile
         DialectAdapter.applyRealisticGirlVoice(tts, text)
 
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -237,7 +236,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             override fun onDone(utteranceId: String?) {
                 isSpeaking = false
                 mainHandler.post {
-                    // HANDS-FREE FOLLOW UP: Response ke baad mic automatically dubara listen karega
+                    // HANDS-FREE FOLLOW UP: Mic immediately opens again for continuous fluid conversation
                     startOnDemandListening(isFollowUp = true)
                 }
             }
@@ -246,7 +245,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             override fun onError(utteranceId: String?) {
                 isSpeaking = false
                 mainHandler.post {
-                    updateServiceNotification("Hardware Standby • Hold Vol Up 3s to Talk")
+                    updateServiceNotification("Hardware Standby • Hold Vol Up 3s / Tap Island")
                 }
             }
         })
