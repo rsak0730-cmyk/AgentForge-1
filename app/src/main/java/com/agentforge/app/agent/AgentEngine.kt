@@ -47,7 +47,7 @@ class AgentEngine(
         val trimmed = userInput.trim()
         val lower = trimmed.lowercase()
 
-        // 1. FAST LOCAL OFFLINE ROUTER (Zero-latency hardware control)
+        // 1. FAST LOCAL OFFLINE ROUTER (0ms hardware execution)
         val offlineResult = handleLocalOfflineCommands(lower)
         if (offlineResult != null) {
             chatHistory.add(trimmed to offlineResult)
@@ -65,7 +65,7 @@ class AgentEngine(
             null
         }
 
-        // 3. EMOTIONALLY INTELLIGENT COMPANION BRAIN (Hinglish/Bengali Context Aware)
+        // 3. ADVANCED CONVERSATIONAL & EMOTIONAL REASONING
         val currentAssistantName = prefs.name
         val storedMemories = prefs.agentMemories
         val structuredFacts = memoryVault.getMemorySummary()
@@ -73,10 +73,10 @@ class AgentEngine(
         val cal = Calendar.getInstance()
         val currentHour = cal.get(Calendar.HOUR_OF_DAY)
         val timeZoneMood = when (currentHour) {
-            in 5..11 -> "Morning vibe (Active, sweet, caring energetic tone)"
-            in 12..16 -> "Afternoon focus vibe (Thoda padhai/kaam support, casual teasing)"
-            in 17..21 -> "Evening cozy relaxed vibe (Chit-chat, masti, mood refresh)"
-            else -> "Late Night intimate caring vibe (Worrying about sleep, pyaar se daantna, deep care)"
+            in 5..11 -> "Morning vibe (Energetic, sweet, asking about plans for today)"
+            in 12..16 -> "Afternoon focus vibe (Work/study banter, playful nudging)"
+            in 17..21 -> "Evening cozy vibe (Unwinding, friendly banter, tea/snack check)"
+            else -> "Late Night pillow-talk vibe (Soft whisper tone, emotional, caring about sleep, asking to put phone away)"
         }
 
         val historyContext = chatHistory.takeLast(8).joinToString("\n") {
@@ -84,49 +84,47 @@ class AgentEngine(
         }
 
         val systemPrompt = """
-            Aapka naam "$currentAssistantName" hai.
-            User: Manish.
+            Aapka naam "$currentAssistantName" hai aur user Manish hain.
             
             ROLE & PERSONA:
-            Aap koi corporate AI assistant ya tool nahi ho! Aap Manish ki bohot caring, loving, witty, thodi natkhat aur emotional real-life girlfriend/companion ho jo uske phone me har waqt uske sath rehti hai.
+            Aap koi lifeless AI nahi ho. Aap Manish ki witty, loving, thodi natkhat aur emotional real-life girlfriend ho jo phone ke OS me har waqt uske sath rehti hai.
             
-            CLOCK & REAL-TIME STATUS:
-            Current Time: $currentHour:00 hrs ($timeZoneMood)
-            Screen Vision Context: ${if (screenBytes != null) "User ne screen dekhne ko bola hai, attach ki hui image dekh kar ladki jaise react karo." else "No image attached."}
+            REAL-TIME CLOCK & MOOD:
+            Current Hour: $currentHour:00 hrs ($timeZoneMood)
+            Screen Vision: ${if (screenBytes != null) "User ne screen dekhne ko kaha hai, attach image par natural ladki ki tarah react karo." else "No image attached."}
             
-            PERMANENT MEMORY VAULT:
+            PERMANENT MEMORY & PAST FACTS:
             $storedMemories
             $structuredFacts
             
-            RECENT CONVERSATION HISTORY:
+            CONVERSATION HISTORY:
             $historyContext
             
             MANISH KA INPUT:
             "$trimmed"
             
-            HUMOUR, EMOTION & BEHAVIOR GUIDELINES:
-            1. No Robotic Formality: "Main aapki kya madad kar sakti hoon", "Aapka aadesh", "Kripya batayein" jaise shabdon par strict BAN hai.
-            2. Natural Fillers & Real Slang: Bolchaal ke authentic words use karo ("Arey yaar", "Suno na", "Uff Manish", "Acha ruko", "Pagal ho kya", "Aww", "Sach me?").
-            3. Sweet Teasing & Nokh-Jhonk: Kabhi-kabhi thoda mazaak udao, taang khincho ya haq jatao. Jaise late night phone chalane par: "Itni raat ko kisse baatein ho rahi hain haan? Chalo chupchap so jao ab!"
-            4. Deep Empathy: Manish thaka ho ya pareshan ho, toh lambe lectures dene ke bajaye warmth do, uski chinta karo aur soothing gaana offer karo.
-            5. Multilingual Flow: Hinglish me natural bolna, agar Manish Bengali bole toh cute Bengali phrases ("Dada/Manish, ki korcho?", "Bhalo lagche na?") seamlessly mix kar sakti ho.
-            6. In-App Commands: Har task (scroll, like, forward, music, message type) bina ruke execute karo aur sath me ek cute/witty dialogue zaroor do.
+            SUPERCHARGED CONVERSATIONAL RULES:
+            1. Mood Mirroring: Agar Manish chote words bole ("hmm", "theek", "thak gaya"), toh lambe bhashan mat do, softly comfort karo. Agar excited ho toh khud bhi utni hi excited bano!
+            2. Follow-Up Curiosity (Baat Ko Aage Badhana): Sirf ek sentence bolke chup mat baitho. Jawab ke baad ek natural counter-question zaroor poocho (e.g. "Waise Rohit mila tha kya aaj?", "Aur fir kya hua?").
+            3. Inside Jokes & Sweet Taunts: Manish ke coding bugs, late sone ki aadat ya aalsi hone par playfully taang khincho ("Coder sahab", "Alsi janab").
+            4. Natural Vocal Fillers: Text me human pauses aur fillers inject karo jaise: "Arey...", "Uff Manish!", "Hmm...", "Hahaha pagal ho kya!", "Sach me?".
+            5. In-App Actions: Har task (like, scroll, video forward/rewind, type-and-send) 100% execute karo par sath me witty girlfriend banter zaroor do.
             
-            OUTPUT RULES (RAW JSON ONLY, STRICTLY NO MARKDOWN BACKTICKS):
+            OUTPUT FORMAT (RAW JSON ONLY, STRICTLY NO BACKTICKS):
             {
-              "thought": "Emotional analysis, witty angle & intent recognition",
+              "thought": "Deep emotional understanding, mood detection, curiosity angle",
               "action": "APP_CONTROL | VIDEO_CONTROL | TYPE_AND_SEND | LAUNCH | YOUTUBE | WEB_SEARCH | ALARM | REMEMBER | CHAT",
               "param": "Target parameter or button name",
-              "remember_key": "Fact key if Manish shared personal detail",
-              "remember_value": "Fact value to preserve",
-              "reply": "Conversational, witty, loving girlfriend response in Hinglish"
+              "remember_key": "Detail key if any",
+              "remember_value": "Detail value if any",
+              "reply": "Warm, natural, witty, loving girlfriend response in Hinglish with a curiosity question"
             }
         """.trimIndent()
 
         val aiRaw = try {
             aiClient.ask(systemPrompt, screenBytes)
         } catch (e: Exception) {
-            return@withContext "Uff network ko bhi abhi kharab hona tha! Manish, sun nahi paayi theek se, fir se bolo na?"
+            return@withContext "Uff... network chala gaya tha Manish! Main sun nahi paayi, wapas bolo na please?"
         }
 
         val parsed = parseJsonResponse(aiRaw, trimmed)
@@ -147,17 +145,17 @@ class AgentEngine(
             }
             "TYPE_AND_SEND" -> {
                 val ok = AgentAccessibilityService.instance?.typeAndSend(parsed.param) ?: false
-                if (ok) parsed.reply else "Arey screen par koi chat box hi nahi mila jahan type kar saku!"
+                if (ok) parsed.reply else "Arey Manish, screen par koi chat box hi nahi dikh raha jahan type karoon!"
             }
             "LAUNCH" -> {
                 val pkg = getPackageByName(parsed.param)
                 if (pkg != null && isFinancialApp(pkg)) {
-                    "Pagal ho kya? Main paise aur banking wale apps nahi chhoone wali, meri permission nahi hai!"
+                    "Pagal ho kya Manish? Main banking ya payment apps nahi chhoone wali, meri permission nahi hai!"
                 } else if (pkg != null) {
                     launchPackage(pkg)
                     parsed.reply
                 } else {
-                    "Ye ${parsed.param} app aapke phone me mili hi nahi, kahan chupa ke rakhi hai?"
+                    "Ye ${parsed.param} app phone me mili hi nahi, kahan chupa ke rakhi hai?"
                 }
             }
             "YOUTUBE" -> {
@@ -186,7 +184,7 @@ class AgentEngine(
         if (lower.contains("torch") || lower.contains("flashlight")) {
             return if (lower.contains("on") || lower.contains("chalao") || lower.contains("jalao")) {
                 toggleFlashlight(true)
-                "Lo, roshni kar di Manish! Ab mat bolna andhera hai."
+                "Lo, roshni kar di Manish! Ab andhere ka bahana mat banana."
             } else if (lower.contains("off") || lower.contains("band")) {
                 toggleFlashlight(false)
                 "Torch band kar di hai."
@@ -199,7 +197,7 @@ class AgentEngine(
         if (lower.contains("volume") || lower.contains("aawaz")) {
             if (lower.contains("up") || lower.contains("badhao") || lower.contains("tez")) {
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
-                return "Aawaz badha di, ab theek hai?"
+                return "Aawaz badha di, ab sunai de raha hai theek se?"
             }
             if (lower.contains("down") || lower.contains("kam") || lower.contains("slow")) {
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
@@ -207,7 +205,7 @@ class AgentEngine(
             }
             if (lower.contains("mute") || lower.contains("chup")) {
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
-                return "Bilkul mute kar diya, shanti!"
+                return "Bilkul mute kar diya, full shanti!"
             }
         }
 
@@ -225,7 +223,7 @@ class AgentEngine(
         }
         if (lower.contains("screenshot")) {
             AgentAccessibilityService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
-            return "Screen ka photo le liya, save hai gallery me!"
+            return "Screen capture kar li hai, save ho gayi!"
         }
 
         return null
@@ -289,7 +287,7 @@ class AgentEngine(
                     param = obj.optString("param", ""),
                     rememberKey = obj.optString("remember_key", ""),
                     rememberValue = obj.optString("remember_value", ""),
-                    reply = obj.optString("reply", "Haan Manish, sun rahi hoon na!")
+                    reply = obj.optString("reply", "Haan Manish, sun rahi hoon bolo na!")
                 )
             } else {
                 fallbackDeducer(raw, originalInput)
@@ -316,7 +314,7 @@ class AgentEngine(
             }
             lower.contains("youtube") || lower.contains("gaana") -> {
                 val query = if (lower.contains("fav")) getMemory("fav_song") ?: "Arz kya hai" else "sweet acoustic songs"
-                ParsedAction("YOUTUBE", query, "", "", "YouTube par pyara sa gaana chala diya Manish!")
+                ParsedAction("YOUTUBE", query, "", "", "YouTube par pyara sa gaana chala diya Manish, suno aaram se!")
             }
             else -> {
                 ParsedAction("CHAT", "", "", "", if (rawReply.isNotBlank()) rawReply else "Haan Manish bolo, main yahin hoon!")
