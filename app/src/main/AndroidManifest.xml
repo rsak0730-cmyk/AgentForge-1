@@ -1,24 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Hardware & Media Permissions -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    
+    <!-- Telephony & Hands-free Butler Permissions -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    
+    <!-- System UI & Foreground Services -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    
+    <!-- Termux IPC Runner Permission -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
+    <!-- Optional Hardware Features -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
 
@@ -30,6 +40,7 @@
         android:allowBackup="false"
         android:supportsRtl="true">
 
+        <!-- Main Launcher Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -39,6 +50,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Device Admin Receiver for Instant Screen Lock & Panic Wipe -->
+        <receiver
+            android:name=".security.AgentAdminReceiver"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_policies" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Call Butler State Receiver -->
         <receiver
             android:name=".service.CallStateReceiver"
             android:exported="true">
@@ -47,6 +72,7 @@
             </intent-filter>
         </receiver>
 
+        <!-- Smart Space Engine (Wi-Fi / Geofence Changes) -->
         <receiver
             android:name=".service.SpaceContextReceiver"
             android:exported="true">
@@ -56,10 +82,12 @@
             </intent-filter>
         </receiver>
 
+        <!-- Macro / Scheduled Routine Receiver -->
         <receiver
             android:name=".service.RoutineAlarmReceiver"
             android:exported="true" />
 
+        <!-- Battery & Thermal Guardian -->
         <receiver
             android:name=".service.BatteryGuardianReceiver"
             android:exported="true">
@@ -68,11 +96,13 @@
             </intent-filter>
         </receiver>
 
+        <!-- Native Screen Buffer (Vision Engine) Service -->
         <service
             android:name=".service.ScreenCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
+        <!-- Stealth Call Screening Services -->
         <service
             android:name=".service.CallButlerService"
             android:exported="false" />
@@ -82,11 +112,13 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Low-Power Passive & Active Voice Listener -->
         <service
             android:name=".service.VoiceListenerService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Smart Notification Listener & Auto-Replier -->
         <service
             android:name=".service.SmartNotificationService"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
@@ -96,6 +128,7 @@
             </intent-filter>
         </service>
 
+        <!-- Deep OS Accessibility Engine & Dynamic Island Service -->
         <service
             android:name=".service.AgentAccessibilityService"
             android:exported="false"
@@ -109,6 +142,7 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- Shizuku Privileged IPC Provider -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"

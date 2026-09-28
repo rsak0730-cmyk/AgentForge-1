@@ -13,7 +13,9 @@ import android.os.BatteryManager
 import android.provider.ContactsContract
 import com.agentforge.app.automation.CallAutoAcceptManager
 import com.agentforge.app.automation.ShizukuBridge
+import com.agentforge.app.automation.TermuxBridge
 import com.agentforge.app.data.MemoryVault
+import com.agentforge.app.security.DeviceAdminManager
 import com.agentforge.app.service.AgentAccessibilityService
 import com.agentforge.app.service.RoutineAlarmReceiver
 import com.agentforge.app.service.ScreenCaptureService
@@ -32,13 +34,15 @@ class AgentEngine(
     private val conversationHistory = mutableListOf<String>()
     private val memory = MemoryVault(context)
     private val callManager = CallAutoAcceptManager(context, shizuku)
+    private val termuxBridge = TermuxBridge(context)
+    private val adminManager = DeviceAdminManager(context)
     private var isTorchOn = false
 
     suspend fun execute(userQuery: String, capturedImageBytes: ByteArray? = null): String {
         val trimmed = userQuery.trim()
         if (trimmed.isEmpty() && capturedImageBytes == null) return "Boliye, sun rahi hoon."
 
-        // 1. ZERO-LATENCY 50ms LOCAL INTENT DISPATCHER
+        // 1. FAST LOCAL ENGINE
         val localFastResult = handleFastLocalActions(trimmed)
         if (localFastResult != null) {
             conversationHistory.add("User: $trimmed")
@@ -46,7 +50,7 @@ class AgentEngine(
             return localFastResult
         }
 
-        // 2. NATIVE SCREEN FRAME CAPTURE FALLBACK (Diagrams / Canvas)
+        // 2. VISION BUFFER CAPTURE
         var visualBytes = capturedImageBytes
         if (visualBytes == null && (trimmed.contains("screen", ignoreCase = true) || trimmed.contains("solve", ignoreCase = true) || trimmed.contains("dekh", ignoreCase = true))) {
             visualBytes = ScreenCaptureService.instance?.captureCurrentScreenJpeg()
@@ -80,6 +84,8 @@ Recent Conversation Context:
 ${conversationHistory.takeLast(4).joinToString("\n")}
 
 CAPABILITIES & ACTIONS:
+- "lock_screen": (Instantly lock device display securely)
+- "run_termux": (param: script path, text: arguments)
 - "solve_study_problem": (Analyze visible screen questions/diagrams and explain concisely)
 - "accept_call", "reject_call"
 - "save_screen_notes", "react_story", "identify_music", "whatsapp_meme"
@@ -91,7 +97,7 @@ CAPABILITIES & ACTIONS:
 
 Return STRICT JSON ONLY:
 {
-  "action": "solve_study_problem"|"accept_call"|"reject_call"|"save_screen_notes"|"react_story"|"identify_music"|"whatsapp_meme"|"morning_briefing"|"bedtime_routine"|"macro_pipeline"|"summarize_screen"|"remember_fact"|"open_app"|"home"|"back"|"recents"|"play_pause"|"toggle_torch"|"volume_up"|"volume_down"|"call"|"whatsapp_send"|"telegram_send"|"notification_reply"|"schedule_routine"|"conversational_reply",
+  "action": "lock_screen"|"run_termux"|"solve_study_problem"|"accept_call"|"reject_call"|"save_screen_notes"|"react_story"|"identify_music"|"whatsapp_meme"|"morning_briefing"|"bedtime_routine"|"macro_pipeline"|"summarize_screen"|"remember_fact"|"open_app"|"home"|"back"|"recents"|"play_pause"|"toggle_torch"|"volume_up"|"volume_down"|"call"|"whatsapp_send"|"telegram_send"|"notification_reply"|"schedule_routine"|"conversational_reply",
   "param": "target/app/fact",
   "text": "content",
   "id": 0,
@@ -112,6 +118,14 @@ Return STRICT JSON ONLY:
             val replyMsg = json.optString("reply")
 
             when (action) {
+                "lock_screen" -> {
+                    val ok = adminManager.lockDeviceNow()
+                    feedback = if (ok) replyMsg.ifBlank { "Phone lock kar diya." } else "Admin lock permission missing."
+                }
+                "run_termux" -> {
+                    val ok = termuxBridge.executeTermuxScript(param, if (text.isNotBlank()) arrayOf(text) else emptyArray())
+                    feedback = if (ok) replyMsg.ifBlank { "Termux command fire kar diya." } else "Termux missing."
+                }
                 "solve_study_problem" -> {
                     feedback = replyMsg.ifBlank { "Problem solve kar di hai: $text" }
                     service?.showIsland("Study: Solution Ready")
@@ -181,6 +195,10 @@ Return STRICT JSON ONLY:
     private fun handleFastLocalActions(cmd: String): String? {
         val lower = cmd.lowercase()
 
+        if (lower.contains("lock phone") || lower.contains("phone lock") || lower.contains("screen lock karo")) {
+            adminManager.lockDeviceNow()
+            return "Screen lock kar di gayi hai."
+        }
         if (lower.contains("call utha lo") || lower.contains("receive call") || lower.contains("answer call")) {
             val ok = callManager.acceptIncomingCall()
             return if (ok) "Call connect kar di hai speaker par." else "Call answer nahi ho paayi."
@@ -190,6 +208,7 @@ Return STRICT JSON ONLY:
             return if (ok) "Call decline kar di." else "Call decline nahi ho paayi."
         }
         if (lower.contains("cancel everything red") || lower.contains("code black emergency")) {
+            adminManager.lockDeviceNow()
             return triggerPanicDuressMode()
         }
         if (lower.contains("torch") || lower.contains("flashlight") || lower.contains("light on") || lower.contains("light off")) {
