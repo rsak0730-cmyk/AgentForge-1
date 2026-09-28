@@ -15,12 +15,17 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.SweepGradient
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.view.GestureDetector
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -62,6 +67,24 @@ class AgentAccessibilityService : AccessibilityService() {
     private lateinit var shizukuBridge: ShizukuBridge
     private lateinit var predictiveEngine: PredictiveActionEngine
 
+    // ---------------- VOLUME KEY HARDWARE TRIGGER STATE ----------------
+    private val keyHandler = Handler(Looper.getMainLooper())
+    private var isVolumeUpPressed = false
+    private var isHoldTriggered = false
+    private var isListeningActive = false
+
+    private val longPressRunnable = Runnable {
+        isHoldTriggered = true
+        isListeningActive = true
+        triggerHaptic(true)
+        showIsland("🎙️ Listening Mode ON")
+
+        val intent = Intent(this, VoiceListenerService::class.java).apply {
+            action = VoiceListenerService.ACTION_START_LISTENING
+        }
+        startService(intent)
+    }
+
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener {
         handleClipboardChange()
     }
@@ -88,6 +111,62 @@ class AgentAccessibilityService : AccessibilityService() {
         predictiveEngine.dispatchPreloadedIslandSuggestion()
     }
 
+    override fun onKeyEvent(event: KeyEvent?): Boolean {
+        if (event == null) return false
+
+        if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    if (!isVolumeUpPressed) {
+                        isVolumeUpPressed = true
+                        isHoldTriggered = false
+                        // 3 seconds hold countdown
+                        keyHandler.postDelayed(longPressRunnable, 3000)
+                    }
+                    // Prevent default system volume increment when active or held
+                    return isHoldTriggered || isListeningActive
+                }
+                KeyEvent.ACTION_UP -> {
+                    keyHandler.removeCallbacks(longPressRunnable)
+                    isVolumeUpPressed = false
+
+                    if (!isHoldTriggered && isListeningActive) {
+                        // Single tap when already listening -> Stop
+                        isListeningActive = false
+                        triggerHaptic(false)
+                        showIsland("🔇 Mic OFF")
+
+                        val intent = Intent(this, VoiceListenerService::class.java).apply {
+                            action = VoiceListenerService.ACTION_STOP_LISTENING
+                        }
+                        startService(intent)
+                        return true
+                    }
+                    return isHoldTriggered
+                }
+            }
+        }
+        return super.onKeyEvent(event)
+    }
+
+    private fun triggerHaptic(isStart: Boolean) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                val effect = if (isStart) {
+                    VibrationEffect.createWaveform(longArrayOf(0, 100, 70, 120), -1)
+                } else {
+                    VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                }
+                vm.defaultVibrator.vibrate(effect)
+            } else {
+                @Suppress("DEPRECATION")
+                val v = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                if (isStart) v.vibrate(120) else v.vibrate(35)
+            }
+        } catch (_: Exception) {}
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -98,8 +177,8 @@ class AgentAccessibilityService : AccessibilityService() {
 
     private fun handleAppSwitchDetox(currentPkg: String) {
         val isSocialApp = currentPkg.contains("instagram.android") ||
-                          currentPkg.contains("youtube") ||
-                          currentPkg.contains("tiktok")
+                currentPkg.contains("youtube") ||
+                currentPkg.contains("tiktok")
 
         if (isSocialApp) {
             if (lastSocialPackage != currentPkg) {
@@ -146,6 +225,7 @@ class AgentAccessibilityService : AccessibilityService() {
     override fun onInterrupt() { showIsland("Paused") }
 
     override fun onDestroy() {
+        keyHandler.removeCallbacksAndMessages(null)
         borderTrailView?.stopAnimation()
         waveAnimator?.cancel()
         clipboardManager?.removePrimaryClipChangedListener(clipListener)
