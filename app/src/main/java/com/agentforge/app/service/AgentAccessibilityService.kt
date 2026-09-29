@@ -12,6 +12,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.Point
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.SweepGradient
@@ -19,6 +20,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
@@ -29,6 +32,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
@@ -65,7 +69,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
             focusEndTimeMs = SystemClock.elapsedRealtime() + (minutes * 60 * 1000L)
             isFocusModeActive = true
             instance?.showIsland("🎯 Focus: ${minutes}m Active")
-            instance?.speakDirectly("Focus mode shuru. Agle $minutes minute kaam par focus rakhein!")
+            instance?.speakDirectly("Focus mode shuru. Agle $minutes minute kaam par dhyan dein!")
         }
 
         fun stopFocusMode() {
@@ -148,6 +152,15 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale("hi", "IN")
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
+                    override fun onDone(utteranceId: String?) {
+                        abandonSpeechFocus()
+                    }
+                    override fun onError(utteranceId: String?) {
+                        abandonSpeechFocus()
+                    }
+                })
             }
         }
 
@@ -163,43 +176,80 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         }
     }
 
-    fun speakDirectly(text: String) {
-        Handler(Looper.getMainLooper()).post {
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "AGENT_SPEECH")
+    // ---------------- AUDIO FOCUS MANAGEMENT (NO SELF-ECHO LOOP) ----------------
+    private fun requestSpeechFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build())
+                .build()
+            audioManager.requestAudioFocus(focusRequest)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
         }
     }
 
-    // ---------------- DYNAMIC SCREEN HIERARCHY TREE SCRAPER ----------------
+    private fun abandonSpeechFocus() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(null)
+        }
+    }
+
+    fun speakDirectly(text: String) {
+        Handler(Looper.getMainLooper()).post {
+            requestSpeechFocus()
+            val params = Bundle().apply {
+                putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "SPEECH_${System.currentTimeMillis()}")
+            }
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "SPEECH_DIRECT")
+        }
+    }
+
+    // ---------------- OPTIMIZED COMPRESSED UI TREE SCRAPER (MAX 35 KEY NODES) ----------------
     fun scrapeScreenElements(): String {
         val root = rootInActiveWindow ?: return "[]"
         val elementsArray = JSONArray()
-        val metrics = resources.displayMetrics
-        val screenW = metrics.widthPixels.toFloat()
-        val screenH = metrics.heightPixels.toFloat()
+        val realSize = getRealScreenDimensions()
+        val screenW = realSize.x.toFloat()
+        val screenH = realSize.y.toFloat()
 
+        var count = 0
         fun traverse(node: AccessibilityNodeInfo?) {
-            if (node == null) return
+            if (node == null || count >= 35) return
+
             val rect = Rect()
             node.getBoundsInScreen(rect)
+
+            // Ignore off-screen items or zero-size invisibles
+            if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= screenW || rect.top >= screenH || rect.width() <= 8 || rect.height() <= 8) {
+                for (i in 0 until node.childCount) traverse(node.getChild(i))
+                return
+            }
 
             val text = node.text?.toString()?.trim() ?: ""
             val desc = node.contentDescription?.toString()?.trim() ?: ""
             val isClickable = node.isClickable
             val isEditable = node.isEditable
 
-            if ((text.isNotEmpty() || desc.isNotEmpty() || isClickable || isEditable) && rect.width() > 0 && rect.height() > 0) {
+            if (text.isNotEmpty() || desc.isNotEmpty() || isClickable || isEditable) {
                 val item = JSONObject().apply {
-                    if (text.isNotEmpty()) put("text", text)
-                    if (desc.isNotEmpty()) put("desc", desc)
-                    put("clickable", isClickable)
-                    put("editable", isEditable)
-                    put("cx_pct", (rect.centerX() / screenW).coerceIn(0f, 1f))
-                    put("cy_pct", (rect.centerY() / screenH).coerceIn(0f, 1f))
+                    if (text.isNotEmpty()) put("text", text.take(50))
+                    if (desc.isNotEmpty()) put("desc", desc.take(50))
+                    if (isClickable) put("clickable", true)
+                    if (isEditable) put("editable", true)
+                    put("x", String.format(Locale.US, "%.2f", (rect.centerX() / screenW).coerceIn(0.01f, 0.99f)).toDouble())
+                    put("y", String.format(Locale.US, "%.2f", (rect.centerY() / screenH).coerceIn(0.01f, 0.99f)).toDouble())
                 }
                 elementsArray.put(item)
+                count++
             }
 
             for (i in 0 until node.childCount) {
+                if (count >= 35) break
                 traverse(node.getChild(i))
             }
         }
@@ -208,29 +258,43 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         return elementsArray.toString()
     }
 
-    // ---------------- PERCENTAGE-BASED PRECISE TOUCH EXECUTION ----------------
+    private fun getRealScreenDimensions(): Point {
+        val point = Point()
+        val wm = windowManager ?: getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val metrics = wm.currentWindowMetrics
+            point.x = metrics.bounds.width()
+            point.y = metrics.bounds.height()
+        } else {
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealSize(point)
+        }
+        return point
+    }
+
+    // ---------------- ACCURATE PERCENTAGE TOUCH ENGINE ----------------
     fun clickAtPercentage(pctX: Float, pctY: Float): Boolean {
-        val metrics = resources.displayMetrics
-        val realX = pctX.coerceIn(0.01f, 0.99f) * metrics.widthPixels
-        val realY = pctY.coerceIn(0.01f, 0.99f) * metrics.heightPixels
-        return clickCoordinates(realX, realY)
+        val realSize = getRealScreenDimensions()
+        val targetX = pctX.coerceIn(0.01f, 0.99f) * realSize.x
+        val targetY = pctY.coerceIn(0.01f, 0.99f) * realSize.y
+        return clickCoordinates(targetX, targetY)
     }
 
     fun longPressAtPercentage(pctX: Float, pctY: Float): Boolean {
-        val metrics = resources.displayMetrics
-        val realX = pctX.coerceIn(0.01f, 0.99f) * metrics.widthPixels
-        val realY = pctY.coerceIn(0.01f, 0.99f) * metrics.heightPixels
+        val realSize = getRealScreenDimensions()
+        val targetX = pctX.coerceIn(0.01f, 0.99f) * realSize.x
+        val targetY = pctY.coerceIn(0.01f, 0.99f) * realSize.y
 
-        val path = Path().apply { moveTo(realX, realY) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 750)
+        val path = Path().apply { moveTo(targetX, targetY) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 800)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return dispatchGesture(gesture, null, null)
     }
 
     fun swipeDirection(direction: String): Boolean {
-        val metrics = resources.displayMetrics
-        val w = metrics.widthPixels.toFloat()
-        val h = metrics.heightPixels.toFloat()
+        val realSize = getRealScreenDimensions()
+        val w = realSize.x.toFloat()
+        val h = realSize.y.toFloat()
 
         return when (direction.uppercase()) {
             "UP" -> swipeGesture(w / 2f, h * 0.82f, w / 2f, h * 0.18f, 220)
@@ -292,10 +356,10 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         val text = buffer.toString()
 
         val matchedError = when {
-            text.contains("SyntaxError") -> "SyntaxError detect hua. Quotes ya brackets check karein."
-            text.contains("IndentationError") -> "IndentationError aaya hai. Spaces align karein."
-            text.contains("NameError") -> "NameError hai. Variable define nahi hai."
-            text.contains("TypeError") -> "TypeError mila hai."
+            text.contains("SyntaxError") -> "SyntaxError detect hua. Colon ya quotes check karein."
+            text.contains("IndentationError") -> "IndentationError aaya hai. Indentation match karein."
+            text.contains("NameError") -> "NameError hai. Variable defined nahi hai."
+            text.contains("TypeError") -> "TypeError detect hua."
             else -> null
         }
 
@@ -678,7 +742,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         }
     }
 
-    // ---------------- TEXT ENTRY & SEND (MULTI-TARGET RESOLUTION) ----------------
+    // ---------------- ROBUST TEXT ENTRY & DISPATCH ----------------
     fun typeAndSend(text: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val targetNode = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: findFirstEditableNode(root)
@@ -692,8 +756,8 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
                 Handler(Looper.getMainLooper()).postDelayed({
                     val clicked = clickByTextOrDescription(listOf("send", "bhejo", "submit", "post", "enter", "done"))
                     if (!clicked) {
-                        val metrics = resources.displayMetrics
-                        clickCoordinates(metrics.widthPixels * 0.90f, metrics.heightPixels * 0.95f)
+                        val realSize = getRealScreenDimensions()
+                        clickCoordinates(realSize.x * 0.90f, realSize.y * 0.95f)
                     }
                 }, 350)
                 return true
@@ -717,8 +781,8 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         if (root != null && clickByTextOrDescription(listOf("fast forward", "forward 10 seconds", "seek forward"))) {
             return true
         }
-        val metrics = resources.displayMetrics
-        return doubleTapCoordinates(metrics.widthPixels * 0.78f, metrics.heightPixels * 0.35f)
+        val realSize = getRealScreenDimensions()
+        return doubleTapCoordinates(realSize.x * 0.78f, realSize.y * 0.35f)
     }
 
     fun rewindVideo(): Boolean {
@@ -726,8 +790,8 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         if (root != null && clickByTextOrDescription(listOf("rewind", "rewind 10 seconds", "seek backward"))) {
             return true
         }
-        val metrics = resources.displayMetrics
-        return doubleTapCoordinates(metrics.widthPixels * 0.22f, metrics.heightPixels * 0.35f)
+        val realSize = getRealScreenDimensions()
+        return doubleTapCoordinates(realSize.x * 0.22f, realSize.y * 0.35f)
     }
 
     private fun doubleTapCoordinates(x: Float, y: Float): Boolean {
@@ -764,9 +828,9 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         val clicked = clickByTextOrDescription(listOf("like", "heart", "pasand", "thumbs up"))
         if (clicked) return true
 
-        val metrics = resources.displayMetrics
-        val cx = metrics.widthPixels / 2f
-        val cy = metrics.heightPixels / 2f
+        val realSize = getRealScreenDimensions()
+        val cx = realSize.x / 2f
+        val cy = realSize.y / 2f
         return doubleTapCoordinates(cx, cy)
     }
 

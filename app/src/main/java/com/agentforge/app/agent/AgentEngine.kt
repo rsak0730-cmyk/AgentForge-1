@@ -8,7 +8,6 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Environment
-import android.provider.AlarmClock
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
 import com.agentforge.app.data.MemoryVault
@@ -16,6 +15,7 @@ import com.agentforge.app.network.AgentPeerSync
 import com.agentforge.app.service.AgentAccessibilityService
 import com.agentforge.app.service.ScreenCaptureService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -60,7 +60,7 @@ class AgentEngine(
         val trimmed = userInput.trim()
         val lower = trimmed.lowercase()
 
-        // 1. FAST LOCAL OFFLINE COMMANDS (0ms Hardware Routing)
+        // 1. FAST LOCAL OFFLINE COMMANDS (0ms Hardware Latency)
         val offlineResult = handleLocalOfflineCommands(lower)
         if (offlineResult != null) {
             chatHistory.add(trimmed to offlineResult)
@@ -83,7 +83,7 @@ class AgentEngine(
             return@withContext msg
         }
 
-        // 3. CAPTURE REAL-TIME SCREEN CONTEXT & UI ELEMENTS
+        // 3. CAPTURE FILTERED UI HIERARCHY TREE
         val screenElementsJson = AgentAccessibilityService.instance?.scrapeScreenElements() ?: "[]"
         val needsVision = lower.contains("dekh") || lower.contains("screen") ||
                 lower.contains("ye kya hai") || lower.contains("code") || lower.contains("save code")
@@ -105,35 +105,35 @@ class AgentEngine(
             "User: ${it.first}\nAssistant: ${it.second}"
         }
 
-        // 4. AUTONOMOUS UI GROUNDING SYSTEM PROMPT
+        // 4. AUTONOMOUS INTENT REASONING WITH STRICT JSON ENFORCEMENT
         val systemPrompt = """
-            You are "$currentAssistantName", an autonomous Android OS companion.
-            You must understand ANY natural conversational command from the user in English, Hindi, or Hinglish, and map it to system execution.
+            You are "$currentAssistantName", a fast, highly capable autonomous Android OS companion.
+            You must map any conversational user query to physical device execution or reply conversationally.
             
-            REAL-TIME SCREEN ACCESSIBILITY TREE:
+            ACTIVE ON-SCREEN UI TREE (Top Visible Interactive Nodes):
             $screenElementsJson
             
-            ACTIONS SUPPORTED:
-            1. CLICK_NODE: {"action": "CLICK_NODE", "param": "text or desc of screen element to click"}
-            2. CLICK_AT: {"action": "CLICK_AT", "cx_pct": 0.5, "cy_pct": 0.5} (Tap exact percentage coordinate on screen)
-            3. LONG_PRESS: {"action": "LONG_PRESS", "cx_pct": 0.5, "cy_pct": 0.5}
-            4. SWIPE: {"action": "SWIPE", "param": "UP | DOWN | LEFT | RIGHT"}
-            5. TYPE_AND_SEND: {"action": "TYPE_AND_SEND", "param": "text to type into active input and submit"}
-            6. LAUNCH: {"action": "LAUNCH", "param": "app name to launch e.g. whatsapp, chrome, termux, instagram"}
-            7. SAVE_CODE: {"action": "SAVE_CODE", "code_payload": "clean extracted code from screen"}
-            8. YOUTUBE: {"action": "YOUTUBE", "param": "song or video query"}
-            9. CHAT: {"action": "CHAT", "reply": "conversational answer"}
+            AVAILABLE ACTIONS:
+            - CLICK_NODE: {"action": "CLICK_NODE", "param": "matching text or desc"}
+            - CLICK_AT: {"action": "CLICK_AT", "cx_pct": 0.5, "cy_pct": 0.5} (Exact normalized coordinates 0.01 - 0.99)
+            - LONG_PRESS: {"action": "LONG_PRESS", "cx_pct": 0.5, "cy_pct": 0.5}
+            - SWIPE: {"action": "SWIPE", "param": "UP | DOWN | LEFT | RIGHT"}
+            - TYPE_AND_SEND: {"action": "TYPE_AND_SEND", "param": "text to type into active field and submit"}
+            - LAUNCH: {"action": "LAUNCH", "param": "app name e.g. whatsapp, chrome, termux, instagram"}
+            - SAVE_CODE: {"action": "SAVE_CODE", "code_payload": "clean python/js code extracted from screen"}
+            - YOUTUBE: {"action": "YOUTUBE", "param": "song/video search query"}
+            - CHAT: {"action": "CHAT", "reply": "conversational reply"}
             
-            RULE: Output ONLY a single raw valid JSON object. No markdown backticks, no explanations.
+            RULE: Output ONLY a single raw valid JSON object. No markdown backticks, no comments.
             
-            CLOCK: $currentHour:00
+            TIME: $currentHour:00 hrs
             HISTORY:
             $historyContext
             
-            USER SAID:
+            USER INPUT:
             "$trimmed"
             
-            JSON FORMAT:
+            FORMAT:
             {
               "action": "CLICK_NODE | CLICK_AT | LONG_PRESS | SWIPE | TYPE_AND_SEND | LAUNCH | SAVE_CODE | YOUTUBE | CHAT",
               "param": "",
@@ -154,11 +154,13 @@ class AgentEngine(
         val service = AgentAccessibilityService.instance
         service?.triggerHeartbeatHaptic()
 
-        // 5. ACTION DISPATCH
+        // 5. STABLE ACTION EXECUTION
         val finalReply = when (parsed.action) {
             "CLICK_NODE" -> {
                 val ok = service?.clickAnyElementOnScreen(parsed.param) ?: false
-                if (ok) parsed.reply.ifBlank { "Click kar diya." } else {
+                if (ok) {
+                    parsed.reply.ifBlank { "Click kar diya." }
+                } else {
                     service?.clickAtPercentage(parsed.cxPct, parsed.cyPct)
                     parsed.reply.ifBlank { "${parsed.param} tap kiya." }
                 }
@@ -185,6 +187,8 @@ class AgentEngine(
                     "Security rules ki wajah se banking apps direct control nahi ki ja sakti."
                 } else if (pkg != null) {
                     launchPackage(pkg)
+                    // Short delay to let app transition happen cleanly
+                    delay(300)
                     parsed.reply.ifBlank { "${parsed.param} open kar diya." }
                 } else {
                     "${parsed.param} app phone me nahi mili."
@@ -196,7 +200,7 @@ class AgentEngine(
                 "Screen se code extract karke /sdcard/MiraScripts me save kar diya hai."
             }
             "YOUTUBE" -> {
-                openYouTubeSearch(parsed.param.ifBlank { "lo-fi beats" })
+                openYouTubeSearch(parsed.param.ifBlank { "coding lo-fi" })
                 parsed.reply.ifBlank { "YouTube par chala diya." }
             }
             else -> parsed.reply
@@ -212,7 +216,6 @@ class AgentEngine(
         val petName = prefs.userPetName
         val service = AgentAccessibilityService.instance
 
-        // Fast Natural Gestures
         if (lower.contains("scroll") || lower.contains("next") || lower.contains("aage badhao") || lower.contains("dusra")) {
             service?.scrollForward()
             return "Next scroll kar diya!"
@@ -226,7 +229,6 @@ class AgentEngine(
             return "Like kar diya!"
         }
 
-        // Fast Video Navigation
         if (lower.contains("forward") || lower.contains("aage karo")) {
             service?.forwardVideo()
             return "10 second forward kar diya."
@@ -236,7 +238,6 @@ class AgentEngine(
             return "10 second rewind kar diya."
         }
 
-        // Hardware Controls
         if (lower.contains("torch") || lower.contains("flashlight")) {
             return if (lower.contains("on") || lower.contains("jalao")) {
                 toggleFlashlight(true)
@@ -265,7 +266,6 @@ class AgentEngine(
             }
         }
 
-        // System Navigation
         if (lower == "home" || lower == "home screen" || lower == "bahar aao") {
             service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
             return "Home screen par aa gaye."
