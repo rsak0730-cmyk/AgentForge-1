@@ -1,7 +1,6 @@
 package com.agentforge.app.agent
 
 import android.accessibilityservice.AccessibilityService
-import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
 import android.hardware.camera2.CameraManager
@@ -38,7 +37,7 @@ class AgentEngine(
 
     private val peerSync = AgentPeerSync(context) { sender, message ->
         AgentAccessibilityService.instance?.let { service ->
-            service.showIsland("📡 $sender: $message")
+            service.showIsland("● $sender: $message")
             service.speakDirectly("$sender: $message")
             service.triggerHeartbeatHaptic()
         }
@@ -58,12 +57,11 @@ class AgentEngine(
         "com.hdfcbank.android"
     )
 
-    // Phonetic & STT Misinterpretation Healing Map
+    // Accurate Phonetic Map ("bata" removed so casual Hindi won't trigger data toggles)
     private val phoneticAliasMap = mapOf(
         "tata" to "data",
         "deta" to "data",
         "gata" to "data",
-        "bata" to "data",
         "waifai" to "wifi",
         "bhai bhai" to "wifi",
         "wi fi" to "wifi",
@@ -95,7 +93,7 @@ class AgentEngine(
         val normalizedInput = sanitizePhoneticSpokenText(trimmed)
         val lower = normalizedInput.lowercase()
 
-        // 1. FAST LOCAL OFFLINE ROUTER (5ms Phonetically Cleaned Execution)
+        // 1. FAST LOCAL OFFLINE ROUTER (Only triggers if explicitly action oriented)
         val offlineResult = handleLocalOfflineCommands(lower)
         if (offlineResult != null) {
             chatHistory.add(trimmed to offlineResult)
@@ -110,7 +108,6 @@ class AgentEngine(
             chatHistory.add(trimmed to msg)
             return@withContext msg
         }
-
         if (lower.contains("stop focus") || lower.contains("focus band")) {
             AgentAccessibilityService.stopFocusMode()
             val msg = "Focus mode band kar diya."
@@ -124,10 +121,7 @@ class AgentEngine(
 
         val needsVision = lower.contains("dekh") || lower.contains("screen") ||
                 lower.contains("ye kya") || lower.contains("code") || lower.contains("padho") ||
-                lower.contains("ye") || lower.contains("wo") || lower.contains("color") ||
-                lower.contains("photo") || lower.contains("button") || lower.contains("iska") ||
-                lower.contains("eta") || lower.contains("ki eta")
-
+                lower.contains("color") || lower.contains("photo")
         val screenBytes: ByteArray? = if (needsVision) {
             ScreenCaptureService.instance?.captureCurrentScreenJpeg()
         } else {
@@ -138,7 +132,8 @@ class AgentEngine(
         val currentPetName = prefs.userPetName
         val cal = Calendar.getInstance()
         val currentHour = cal.get(Calendar.HOUR_OF_DAY)
-        val recentScreenContext = if (lower.contains("pehle") || lower.contains("kya tha") || lower.contains("dekha tha")) {
+
+        val recentScreenContext = if (lower.contains("pehle") || lower.contains("kya tha")) {
             memoryVault.getRecentScreenMemory()
         } else {
             ""
@@ -149,57 +144,22 @@ class AgentEngine(
         }
 
         val systemPrompt = """
-            You are "$currentAssistantName", an ultra-autonomous next-gen Android OS companion and phone co-pilot.
-            
-            AUDIO CLARITY & SPEECH TYPO RECOVERY:
-            - The user input comes directly from Android voice speech recognition.
-            - It might have minor phonetic misinterpretations or accents (e.g. "tata/deta" for data, "waifai" for wifi, "skrol" for scroll).
-            - Intelligently deduce the user's intended phone actions from context.
+            You are "$currentAssistantName", an ultra-autonomous next-gen Android OS companion.
             
             RULES & INTELLIGENCE:
-            1. QUESTION vs ACTION:
-               - If user is asking questions ("kaise karein", "how to"), keep "steps": [] empty.
-            2. TEMPORAL SCREEN RECALL:
-               - Past Screen: $recentScreenContext
-            3. MEDIA DOWNLOAD TRIGGER:
-               - For saving reels/videos: {"action": "DOWNLOAD_MEDIA", "param": "url_or_screen_link", "mode": "audio | video"}
-            4. LIVE WEB SCRAPER:
-               - Real-time live info/scores/news: {"action": "WEB_SEARCH", "param": "search query"}
-            5. ZERO-SHOT GHOST TAP:
-               - Untagged UI targets: {"action": "GHOST_TAP", "cx_pct": 0.5, "cy_pct": 0.5}
-            
-            SCROLL DIRECTION PHYSICS:
-            - View lower content ("niche dikhao", "scroll down") -> SWIPE UP.
-            - View upper content ("upar karo", "scroll up") -> SWIPE DOWN.
+            1. If user is greeting, asking how are you, or talking casually ("kaisa hai", "hey", "ha"), reply warmly in Hinglish with empty steps [].
+            2. For actions, return strict JSON.
             
             ACTIVE ON-SCREEN UI TREE:
             $screenElementsJson
             
-            SUPPORTED ACTIONS:
-            - CLICK_NODE: {"action": "CLICK_NODE", "param": "matching text"}
-            - CLICK_AT: {"action": "CLICK_AT", "cx_pct": 0.5, "cy_pct": 0.5}
-            - GHOST_TAP: {"action": "GHOST_TAP", "cx_pct": 0.5, "cy_pct": 0.5}
-            - SWIPE: {"action": "SWIPE", "param": "UP | DOWN | LEFT | RIGHT"}
-            - TYPE_AND_SEND: {"action": "TYPE_AND_SEND", "param": "text to type"}
-            - LAUNCH: {"action": "LAUNCH", "param": "app name"}
-            - DOWNLOAD_MEDIA: {"action": "DOWNLOAD_MEDIA", "param": "url", "mode": "audio | video"}
-            - WEB_SEARCH: {"action": "WEB_SEARCH", "param": "query"}
-            - RUN_PYTHON: {"action": "RUN_PYTHON", "code_payload": "clean python script"}
-            - APP_OPS: {"action": "APP_OPS", "pkg": "package.name", "op": "RECORD_AUDIO | CAMERA | POST_NOTIFICATION", "mode": "allow | ignore"}
-            - TERMUX_EXEC: {"action": "TERMUX_EXEC", "param": "script_name.sh"}
-            - YOUTUBE: {"action": "YOUTUBE", "param": "query"}
-            - VOLUME: {"action": "VOLUME", "param": "UP | DOWN | MUTE"}
-            - GLOBAL: {"action": "GLOBAL", "param": "HOME | BACK | RECENTS | SCREENSHOT"}
-            
-            OUTPUT RULES (RAW JSON ONLY, STRICTLY NO MARKDOWN BACKTICKS):
+            OUTPUT RULES (RAW JSON ONLY, STRICTLY NO MARKDOWN):
             {
-              "reply": "Warm, crisp Hinglish conversation response",
-              "steps": [
-                {"action": "ACTION_NAME", "param": "", "cx_pct": 0.0, "cy_pct": 0.0, "pkg": "", "op": "", "mode": "", "code_payload": ""}
-              ]
+              "reply": "Warm Hinglish conversation",
+              "steps": []
             }
             
-            USER INPUT: "$normalizedInput" (Raw: "$trimmed")
+            USER INPUT: "$normalizedInput"
             CLOCK: $currentHour:00 hrs
             HISTORY:
             $historyContext
@@ -233,14 +193,12 @@ class AgentEngine(
 
         chatHistory.add(trimmed to parsed.reply)
         if (chatHistory.size > 12) chatHistory.removeAt(0)
-
         parsed.reply
     }
 
     private suspend fun waitForAppRender(targetPackage: String, maxWaitMs: Long = 4500) {
         val startTime = System.currentTimeMillis()
         val service = AgentAccessibilityService.instance
-
         delay(350)
         while (System.currentTimeMillis() - startTime < maxWaitMs) {
             if (service != null && service.isAppRendered(targetPackage)) {
@@ -282,16 +240,16 @@ class AgentEngine(
             "DOWNLOAD_MEDIA" -> {
                 val isAudio = step.mode.equals("audio", ignoreCase = true)
                 termuxBridge.downloadMedia(step.param, isAudio)
-                service?.showIsland("⬇️ Downloading Media...")
+                service?.showIsland("● Downloading Media...")
             }
             "WEB_SEARCH" -> {
                 termuxBridge.triggerWebSearch(step.param)
-                service?.showIsland("🌐 Searching Web...")
+                service?.showIsland("● Searching Web...")
             }
             "RUN_PYTHON" -> {
                 if (step.codePayload.isNotBlank()) {
                     termuxBridge.runDynamicPython(step.codePayload)
-                    service?.showIsland("🐍 Script Running...")
+                    service?.showIsland("● Script Running...")
                 }
             }
             "APP_OPS" -> {
@@ -325,15 +283,15 @@ class AgentEngine(
         val petName = prefs.userPetName
         val service = AgentAccessibilityService.instance
 
-        if (lower.contains("kaise") || lower.contains("kya hai") || lower.contains("how to") || lower.contains("explain")) {
+        if (lower.contains("kaise") || lower.contains("kya hai") || lower.contains("kaisa") || lower.contains("batao")) {
             return null
         }
 
-        // Shizuku Direct Fast Toggles with Phonetic Tolerance
-        if (lower.contains("data") || lower.contains("internet")) {
+        // Shizuku Direct Fast Toggles with Strict Action Intents
+        if (lower.contains("mobile data") || (lower.contains("data") && (lower.contains("on") || lower.contains("off") || lower.contains("band") || lower.contains("chalu")))) {
             if (lower.contains("on") || lower.contains("chalu")) {
                 shizuku.setMobileData(true)
-                return "Mobile data on kar diya."
+                return "Mobile data on kar diya $petName."
             } else if (lower.contains("off") || lower.contains("band")) {
                 shizuku.setMobileData(false)
                 return "Mobile data band kar diya."
@@ -360,51 +318,11 @@ class AgentEngine(
             }
         }
 
-        if (lower.contains("battery saver") || lower.contains("power saver")) {
-            if (lower.contains("on") || lower.contains("lagao")) {
-                shizuku.setPowerSaver(true)
-                return "Power saving mode on kar diya."
-            } else if (lower.contains("off") || lower.contains("hatao")) {
-                shizuku.setPowerSaver(false)
-                return "Power saving mode band kar diya."
-            }
-        }
-
         if (lower.contains("lock karo") || lower.contains("phone band karo")) {
             shizuku.lockScreen()
             return "Phone lock kar diya."
         }
 
-        if (lower.contains("brightness") || lower.contains("roshni")) {
-            if (lower.contains("full") || lower.contains("tez") || lower.contains("badhao")) {
-                shizuku.setBrightness(240)
-                return "Brightness badha di."
-            } else if (lower.contains("kam") || lower.contains("low")) {
-                shizuku.setBrightness(40)
-                return "Brightness kam kar di."
-            }
-        }
-
-        if (lower.contains("scroll") || lower.contains("next") || lower.contains("aage badhao") || lower.contains("dusra")) {
-            service?.scrollForward()
-            return "Next scroll kar diya!"
-        }
-        if (lower.contains("peeche scroll") || lower.contains("previous") || lower.contains("upar karo")) {
-            service?.scrollBackward()
-            return "Upar scroll kar diya."
-        }
-        if (lower.contains("like") || lower.contains("heart") || lower.contains("pasand")) {
-            service?.likeCurrentContent()
-            return "Like kar diya!"
-        }
-        if (lower.contains("forward") || lower.contains("aage karo")) {
-            service?.forwardVideo()
-            return "10 second forward kar diya."
-        }
-        if (lower.contains("rewind") || lower.contains("peeche karo")) {
-            service?.rewindVideo()
-            return "10 second rewind kar diya."
-        }
         if (lower.contains("torch") || lower.contains("flashlight")) {
             return if (lower.contains("on") || lower.contains("jalao")) {
                 toggleFlashlight(true)
@@ -416,6 +334,11 @@ class AgentEngine(
                 toggleFlashlight(!isTorchOn)
                 if (isTorchOn) "Torch on ho gayi." else "Torch band kar di."
             }
+        }
+
+        if (lower.contains("scroll") || lower.contains("next") || lower.contains("aage badhao")) {
+            service?.scrollForward()
+            return "Next scroll kar diya!"
         }
 
         return null
@@ -454,7 +377,6 @@ class AgentEngine(
                 val obj = JSONObject(jsonStr)
                 val reply = obj.optString("reply", "Haan boliye!")
                 val stepsList = mutableListOf<ActionStep>()
-
                 val stepsArray = obj.optJSONArray("steps")
                 if (stepsArray != null) {
                     for (i in 0 until stepsArray.length()) {
@@ -485,14 +407,12 @@ class AgentEngine(
     private fun fallbackDeducer(rawReply: String, input: String): ParsedPlan {
         val lower = input.lowercase()
         val steps = mutableListOf<ActionStep>()
-        if (!lower.contains("kaise") && !lower.contains("kya") && !lower.contains("how") && !lower.contains("explain")) {
-            if (lower.contains("scroll") || lower.contains("next")) {
-                steps.add(ActionStep("SWIPE", "UP"))
-            } else if (lower.contains("like")) {
-                steps.add(ActionStep("CLICK_NODE", "like"))
-            }
+        if (lower.contains("scroll") || lower.contains("next")) {
+            steps.add(ActionStep("SWIPE", "UP"))
+        } else if (lower.contains("like")) {
+            steps.add(ActionStep("CLICK_NODE", "like"))
         }
-        return ParsedPlan(if (rawReply.isNotBlank()) rawReply else "Sun rahi hoon!", steps)
+        return ParsedPlan(if (rawReply.isNotBlank()) rawReply else "Haan, sun rahi hoon!", steps)
     }
 
     private fun isFinancialApp(pkg: String): Boolean {

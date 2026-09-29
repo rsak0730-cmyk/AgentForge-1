@@ -28,7 +28,6 @@ class AiClient(
         .writeTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    // Edge On-Device Engine Instance
     private var localLlmInference: LlmInference? = null
     private var isLocalModelInitialized = false
 
@@ -38,10 +37,9 @@ class AiClient(
 
     private fun initLocalEdgeModelIfPresent() {
         try {
-            // Check if user has placed an on-device model file in MiraScripts or App Storage
             val candidatePaths = listOf(
                 File(Environment.getExternalStorageDirectory(), "MiraScripts/model.bin"),
-                File(Environment.getExternalStorageDirectory(), "MiraScripts/gemma.bin"),
+                File(Environment.getExternalStorageDirectory(), "MiraScripts/gemma-4-E2B-it.litertlm"),
                 File(context.filesDir, "model.bin")
             )
             val modelFile = candidatePaths.firstOrNull { it.exists() && it.length() > 50_000_000 }
@@ -74,21 +72,25 @@ class AiClient(
     }
 
     suspend fun ask(prompt: String, screenJpegBytes: ByteArray? = null): String = withContext(Dispatchers.IO) {
-        // 1. Check internet availability
+        // 1. Try Cloud API if connected
         if (isNetworkAvailable() && prefs.key.isNotBlank()) {
             try {
                 return@withContext executeCloudRequest(prompt, screenJpegBytes)
             } catch (_: Exception) {
-                // Network call failed (packet loss / API quota issue) -> Fallback to Local Edge Brain
+                // Network fail hone par Edge Local fallback
             }
         }
 
-        // 2. Offline / Edge On-Device Fallback
+        // 2. On-Device Edge Fallback
         return@withContext executeEdgeLocalRequest(prompt)
     }
 
     private fun executeEdgeLocalRequest(prompt: String): String {
-        // A. If Google AI Edge Model is loaded, use true on-device inference
+        // Check once more in case storage permission just got granted
+        if (localLlmInference == null) {
+            initLocalEdgeModelIfPresent()
+        }
+
         if (localLlmInference != null) {
             try {
                 val response = localLlmInference?.generateResponse(prompt)
@@ -98,22 +100,21 @@ class AiClient(
             } catch (_: Exception) {}
         }
 
-        // B. Instant Offline Heuristic JSON Fallback
-        val lower = prompt.lowercase()
+        // Natural conversational response fallback
+        val clean = prompt.lowercase().trim()
         val petName = prefs.userPetName
 
-        if (lower.contains("data") || lower.contains("internet")) {
-            val isOff = lower.contains("band") || lower.contains("off")
-            return """{"reply": "Mobile data offline handle kar diya $petName.", "steps": [{"action": "APP_OPS", "pkg": "", "op": "", "mode": ""}]}"""
+        if (clean.contains("kaisa") || clean.contains("kaise ho") || clean.contains("kemon")) {
+            return """{"reply": "Main badhiya hoon $petName! Aap bataiye aaj phone me kya karein?", "steps": []}"""
         }
-        if (lower.contains("scroll") || lower.contains("next")) {
-            return """{"reply": "Next post scroll kar diya.", "steps": [{"action": "SWIPE", "param": "UP"}]}"""
+        if (clean == "ha" || clean == "haan" || clean == "theek") {
+            return """{"reply": "Haan $petName, bolo kya task run karna hai?", "steps": []}"""
         }
-        if (lower.contains("like")) {
-            return """{"reply": "Post like kar di.", "steps": [{"action": "CLICK_NODE", "param": "like"}]}"""
+        if (clean.contains("hey") || clean.contains("hello") || clean.contains("hi")) {
+            return """{"reply": "Hey $petName! Main offline standby par ready hoon.", "steps": []}"""
         }
 
-        return """{"reply": "Internet connection nahi hai aur local model loaded nahi mila $petName. Lekin basic hardware triggers armed hain.", "steps": []}"""
+        return """{"reply": "Haan $petName, main sun rahi hoon. Command boliye!", "steps": []}"""
     }
 
     private fun executeCloudRequest(prompt: String, screenJpegBytes: ByteArray?): String {
