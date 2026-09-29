@@ -45,9 +45,6 @@ import com.agentforge.app.agent.DialectAdapter
 import com.agentforge.app.automation.PredictiveActionEngine
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import kotlin.math.sqrt
 
@@ -66,14 +63,15 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         fun startFocusMode(minutes: Int) {
             focusEndTimeMs = SystemClock.elapsedRealtime() + (minutes * 60 * 1000L)
             isFocusModeActive = true
-            instance?.showIsland("🎯 Focus Mode: ${minutes}m Active")
-            instance?.speakDirectly("Focus mode shuru ho gaya hai. Agle $minutes minute koi distraction nahi!")
+            instance?.showIsland("🎯 Focus: ${minutes}m Active")
+            instance?.speakDirectly("Focus mode shuru. Abhi agle $minutes minute padhai par dhyan do!")
         }
 
         fun stopFocusMode() {
             isFocusModeActive = false
             focusEndTimeMs = 0L
-            instance?.showIsland("Focus Mode Ended")
+            instance?.showIsland("Focus Ended")
+            instance?.speakDirectly("Focus mode band kar diya.")
         }
     }
 
@@ -83,7 +81,6 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
     private var islandTextView: TextView? = null
     private var visualizerBarView: TextView? = null
     private var windowManager: WindowManager? = null
-    private val elementBoundsMap = mutableMapOf<Int, Pair<Float, Float>>()
     private var clipboardManager: ClipboardManager? = null
     private var lastClipText: String = ""
     private var waveAnimator: ValueAnimator? = null
@@ -149,13 +146,14 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
 
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                DialectAdapter.applyRealisticGirlVoice(this, tts, "Init")
+                tts?.language = Locale("hi", "IN")
             }
         }
 
         serviceInfo = serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or
-                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                    AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
 
         val prefs = AppPrefs(this)
@@ -166,8 +164,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
 
     fun speakDirectly(text: String) {
         Handler(Looper.getMainLooper()).post {
-            DialectAdapter.applyRealisticGirlVoice(this, tts, text)
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "COPILOT_PING")
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "AGENT_UTTERANCE")
         }
     }
 
@@ -175,31 +172,28 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         if (event == null) return
         val currentPkg = event.packageName?.toString() ?: return
 
-        // 1. FOCUS POMODORO INTERVENTION
         if (isFocusModeActive) {
             val now = SystemClock.elapsedRealtime()
             if (now < focusEndTimeMs) {
                 if (distractionPackages.any { currentPkg.contains(it) }) {
                     performGlobalAction(GLOBAL_ACTION_HOME)
                     val remainingMins = ((focusEndTimeMs - now) / 60000L) + 1
-                    showIsland("🛑 Focus Active: $remainingMins min bache hain!")
-                    speakDirectly("Focus mode on hai! Abhi distraction band karo aur wapas kaam pe lag jao.")
+                    showIsland("🛑 Focus Active: $remainingMins min bache!")
+                    speakDirectly("Focus mode chal raha hai! Abhi distracting apps band rakho.")
                     triggerHeartbeatHaptic()
                     return
                 }
             } else {
                 isFocusModeActive = false
-                showIsland("🎉 Focus Session Completed!")
-                speakDirectly("Shabash! Focus session complete ho gaya hai.")
+                showIsland("🎉 Focus Completed!")
+                speakDirectly("Focus session pura ho gaya!")
             }
         }
 
-        // 2. CODING CO-PILOT DEBUGGER
         if (codingPackages.any { currentPkg.contains(it) }) {
             scanCodeForErrors()
         }
 
-        // 3. SMART NOTIFICATION FILTER PING
         if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
             handleIncomingNotification(event)
         }
@@ -215,16 +209,16 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         val text = buffer.toString()
 
         val matchedError = when {
-            text.contains("SyntaxError") -> "SyntaxError detect hua hai. Colon (:), bracket ya quotes check karo."
-            text.contains("IndentationError") -> "IndentationError hai! Spaces aur tabs ka alignment theek karo."
-            text.contains("NameError") -> "NameError aaya hai. Variable ka naam define nahi hai."
-            text.contains("TypeError") -> "TypeError hai! Data type mismatch check karo."
+            text.contains("SyntaxError") -> "SyntaxError mila hai. Colon ya brackets check karo."
+            text.contains("IndentationError") -> "IndentationError aaya hai. Spaces match karo."
+            text.contains("NameError") -> "NameError hai. Variable name check karo."
+            text.contains("TypeError") -> "TypeError detect hua hai."
             else -> null
         }
 
         if (matchedError != null) {
             lastDebugAlertMs = now
-            showIsland("⚠️ Debugger: Error Detected")
+            showIsland("⚠️ Debugger Alert")
             speakDirectly(matchedError)
             triggerHeartbeatHaptic()
         }
@@ -238,13 +232,13 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         val title = extras.getString(android.app.Notification.EXTRA_TITLE) ?: ""
         val body = extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString() ?: ""
 
-        val isSpam = body.contains("off", true) || body.contains("discount", true) || 
-                     body.contains("cashback", true) || body.contains("update available", true)
+        val isSpam = body.contains("off", true) || body.contains("discount", true) ||
+                body.contains("cashback", true) || body.contains("update available", true)
 
         if (!isSpam && (title.isNotBlank() && body.isNotBlank())) {
-            showIsland("📩 $title: ${body.take(24)}...")
+            showIsland("📩 $title: ${body.take(20)}...")
             if (isNearEar) {
-                speakDirectly("$title se message hai: $body")
+                speakDirectly("$title: $body")
             }
         }
     }
@@ -267,7 +261,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
                 val lux = event.values[0]
                 if (lux < 2.0f && (now - lastDarkWarningMs) > 1000L * 60 * 45) {
                     lastDarkWarningMs = now
-                    showIsland("🌙 Andhere me padhai/screen mat dekho!")
+                    showIsland("🌙 Andhere me screen mat chalao!")
                     triggerComfortPulseHaptic()
                 }
             }
@@ -278,7 +272,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
                 val acceleration = sqrt((x * x + y * y + z * z).toDouble())
                 if (acceleration > 24.0 && (now - lastJerkWarningMs) > 10000L) {
                     lastJerkWarningMs = now
-                    showIsland("⚠️ Device Jerk Detected")
+                    showIsland("⚠️ Jerk Detected")
                     triggerTapHaptic()
                 }
             }
@@ -290,12 +284,12 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
             if (nearEar) {
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                 audioManager.isSpeakerphoneOn = false
-                showIsland("🤫 Earpiece Whisper Connected")
+                showIsland("🤫 Earpiece Whisper Active")
                 triggerHeartbeatHaptic()
             } else {
                 audioManager.mode = AudioManager.MODE_NORMAL
                 audioManager.isSpeakerphoneOn = true
-                showIsland("🔊 Loudspeaker Restored")
+                showIsland("🔊 Speaker Restored")
             }
         } catch (_: Exception) {}
     }
@@ -425,10 +419,10 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         lastClipText = text
 
         when {
-            text.contains("youtube.com") || text.contains("youtu.be") -> showIsland("▶ YouTube Link Copied")
-            text.startsWith("http://") || text.startsWith("https://") -> showIsland("🔗 Link Copied: Open?")
-            text.matches(Regex("^[0-9+\\-*/. ()]+$")) && text.length > 2 -> showIsland("🔢 Math Copied: Calculate?")
-            else -> showIsland("📋 Copied: ${text.take(18)}...")
+            text.contains("youtube.com") || text.contains("youtu.be") -> showIsland("▶ YouTube Copied")
+            text.startsWith("http://") || text.startsWith("https://") -> showIsland("🔗 Link Copied")
+            text.matches(Regex("^[0-9+\\-*/. ()]+$")) && text.length > 2 -> showIsland("🔢 Math Copied")
+            else -> showIsland("📋 Copied: ${text.take(16)}...")
         }
     }
 
@@ -601,18 +595,25 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         }
     }
 
+    // ---------------- ROBUST TEXT ENTRY & SUBMISSION ----------------
     fun typeAndSend(text: String): Boolean {
         val root = rootInActiveWindow ?: return false
-        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: findFirstEditableNode(root)
-        if (focused != null) {
+        val targetNode = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: findFirstEditableNode(root)
+
+        if (targetNode != null) {
             val bundle = Bundle()
             bundle.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-            val success = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
+            val textSuccess = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
 
-            if (success) {
+            if (textSuccess) {
                 Handler(Looper.getMainLooper()).postDelayed({
-                    clickByTextOrDescription(listOf("send", "bhejo", "submit", "enter"))
-                }, 400)
+                    val clicked = clickByTextOrDescription(listOf("send", "bhejo", "submit", "post", "done"))
+                    if (!clicked) {
+                        // Fallback click on typical keyboard send button bottom-right coordinate
+                        val metrics = resources.displayMetrics
+                        clickCoordinates(metrics.widthPixels * 0.90f, metrics.heightPixels * 0.95f)
+                    }
+                }, 350)
                 return true
             }
         }
@@ -629,15 +630,14 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         return null
     }
 
+    // ---------------- REELS / VIDEO CONTROLS WITH COORDINATE FALLBACK ----------------
     fun forwardVideo(): Boolean {
         val root = rootInActiveWindow
         if (root != null && clickByTextOrDescription(listOf("fast forward", "forward 10 seconds", "seek forward"))) {
             return true
         }
         val metrics = resources.displayMetrics
-        val targetX = metrics.widthPixels * 0.78f
-        val targetY = metrics.heightPixels * 0.35f
-        return doubleTapCoordinates(targetX, targetY)
+        return doubleTapCoordinates(metrics.widthPixels * 0.78f, metrics.heightPixels * 0.35f)
     }
 
     fun rewindVideo(): Boolean {
@@ -646,9 +646,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
             return true
         }
         val metrics = resources.displayMetrics
-        val targetX = metrics.widthPixels * 0.22f
-        val targetY = metrics.heightPixels * 0.35f
-        return doubleTapCoordinates(targetX, targetY)
+        return doubleTapCoordinates(metrics.widthPixels * 0.22f, metrics.heightPixels * 0.35f)
     }
 
     private fun doubleTapCoordinates(x: Float, y: Float): Boolean {
@@ -657,39 +655,47 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         val path2 = Path().apply { moveTo(x, y) }
         val stroke2 = GestureDescription.StrokeDescription(path2, 100, 50)
 
-        val gesture = GestureDescription.Builder()
-            .addStroke(stroke1)
-            .addStroke(stroke2)
-            .build()
+        val gesture = GestureDescription.Builder().addStroke(stroke1).addStroke(stroke2).build()
         return dispatchGesture(gesture, null, null)
     }
 
     fun scrollForward(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val scrollable = findScrollableNode(root)
-        return if (scrollable != null) {
-            scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        val root = rootInActiveWindow
+        val scrollable = if (root != null) findScrollableNode(root) else null
+        return if (scrollable != null && scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+            true
         } else {
             val metrics = resources.displayMetrics
             val cx = metrics.widthPixels / 2f
-            val startY = metrics.heightPixels * 0.8f
-            val endY = metrics.heightPixels * 0.2f
+            val startY = metrics.heightPixels * 0.80f
+            val endY = metrics.heightPixels * 0.20f
             swipeGesture(cx, startY, cx, endY)
         }
     }
 
     fun scrollBackward(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val scrollable = findScrollableNode(root)
-        return if (scrollable != null) {
-            scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+        val root = rootInActiveWindow
+        val scrollable = if (root != null) findScrollableNode(root) else null
+        return if (scrollable != null && scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
+            true
         } else {
             val metrics = resources.displayMetrics
             val cx = metrics.widthPixels / 2f
-            val startY = metrics.heightPixels * 0.2f
-            val endY = metrics.heightPixels * 0.8f
+            val startY = metrics.heightPixels * 0.20f
+            val endY = metrics.heightPixels * 0.80f
             swipeGesture(cx, startY, cx, endY)
         }
+    }
+
+    fun likeCurrentContent(): Boolean {
+        val clicked = clickByTextOrDescription(listOf("like", "heart", "pasand", "thumbs up"))
+        if (clicked) return true
+
+        // Double-tap center screen for Instagram/YouTube short like fallback
+        val metrics = resources.displayMetrics
+        val cx = metrics.widthPixels / 2f
+        val cy = metrics.heightPixels / 2f
+        return doubleTapCoordinates(cx, cy)
     }
 
     private fun swipeGesture(startX: Float, startY: Float, endX: Float, endY: Float): Boolean {
@@ -697,7 +703,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
             moveTo(startX, startY)
             lineTo(endX, endY)
         }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 250)
+        val stroke = GestureDescription.StrokeDescription(path, 0, 220)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return dispatchGesture(gesture, null, null)
     }
@@ -765,7 +771,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
 
     fun clickCoordinates(x: Float, y: Float): Boolean {
         val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 80)
+        val stroke = GestureDescription.StrokeDescription(path, 0, 70)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return dispatchGesture(gesture, null, null)
     }

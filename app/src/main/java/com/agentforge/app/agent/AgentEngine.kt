@@ -36,8 +36,8 @@ class AgentEngine(
 
     private val peerSync = AgentPeerSync(context) { sender, message ->
         AgentAccessibilityService.instance?.let { service ->
-            service.showIsland("📡 $sender: $message")
-            service.speakDirectly("$sender keh raha hai: $message")
+            service.showIsland("📡 $sender:$message")
+            service.speakDirectly("$sender:$message")
             service.triggerHeartbeatHaptic()
         }
     }.apply {
@@ -60,44 +60,32 @@ class AgentEngine(
         val trimmed = userInput.trim()
         val lower = trimmed.lowercase()
 
-        // 1. FAST LOCAL OFFLINE ROUTER
+        // 1. FAST LOCAL OFFLINE ROUTER (Guaranteed 0ms execution without waiting for AI)
         val offlineResult = handleLocalOfflineCommands(lower)
         if (offlineResult != null) {
             chatHistory.add(trimmed to offlineResult)
             return@withContext offlineResult
         }
 
-        // 2. FOCUS POMODORO ROUTER
+        // 2. FOCUS TIMER ROUTER
         if (lower.contains("focus") || lower.contains("pomodoro") || lower.contains("padhai")) {
             val minutes = Regex("\\d+").find(lower)?.value?.toIntOrNull() ?: 25
             AgentAccessibilityService.startFocusMode(minutes)
-            val msg = "Focus mode $minutes minute ke liye shuru ho gaya. Distractions block rahenge!"
+            val msg = "Focus mode $minutes minute ke liye start ho gaya."
             chatHistory.add(trimmed to msg)
             return@withContext msg
         }
 
         if (lower.contains("stop focus") || lower.contains("focus band")) {
             AgentAccessibilityService.stopFocusMode()
-            val msg = "Focus mode band kar diya hai."
+            val msg = "Focus mode band ho gaya."
             chatHistory.add(trimmed to msg)
             return@withContext msg
         }
 
-        // 3. MULTI-DEVICE PEER BROADCAST ROUTER
-        if (lower.startsWith("send to peer") || lower.contains("dost ko bolo") || lower.contains("sync message")) {
-            val targetIp = prefs.agentMemories.let {
-                try { JSONObject(it).optString("peer_ip", "192.168.1.100") } catch (_: Exception) { "192.168.1.100" }
-            }
-            peerSync.broadcastPeerMessage(targetIp, "NOTIFY", trimmed, prefs.userPetName)
-            val msg = "Dost ke phone par message broadcast kar diya hai."
-            chatHistory.add(trimmed to msg)
-            return@withContext msg
-        }
-
-        // 4. MULTI-MODAL SCREEN VISION CHECK
-        val needsVision = lower.contains("dekh") || lower.contains("screen") || 
-                lower.contains("ye kya hai") || lower.contains("kaisa lag raha") || 
-                lower.contains("padh ke") || lower.contains("analyze") ||
+        // 3. MULTI-MODAL SCREEN VISION CHECK
+        val needsVision = lower.contains("dekh") || lower.contains("screen") ||
+                lower.contains("ye kya hai") || lower.contains("analyze") ||
                 lower.contains("code") || lower.contains("error") || lower.contains("save code")
 
         val screenBytes: ByteArray? = if (needsVision) {
@@ -106,7 +94,6 @@ class AgentEngine(
             null
         }
 
-        // 5. CONVERSATIONAL PROMPT & CODING SCRIPTER
         val isNearEar = AgentAccessibilityService.isNearEar
         val currentAssistantName = prefs.name
         val storedMemories = prefs.agentMemories
@@ -115,143 +102,139 @@ class AgentEngine(
         val cal = Calendar.getInstance()
         val currentHour = cal.get(Calendar.HOUR_OF_DAY)
 
-        val historyContext = chatHistory.takeLast(8).joinToString("\n") {
-            "User: ${it.first}\n$currentAssistantName: ${it.second}"
+        val historyContext = chatHistory.takeLast(6).joinToString("\n") {
+            "User: ${it.first}\nAssistant:${it.second}"
         }
 
         val systemPrompt = """
-            Aapka naam "$currentAssistantName" hai.
-            Aap user ke advanced phone companion, coding co-pilot aur system automation agent ho.
+            You are "$currentAssistantName", an Android automation and smart companion agent.
             
-            FEATURES:
-            1. Screen Code Extraction: Agar user bole ki screen ka code save karo ya extract karo, action ko "SAVE_CODE" rakho, param me sanitized file extension ya path do, aur reply me confirm karo.
-            2. Call Screening & Auto Excuse: Agar incoming call ka zikr ho ya decline karne ko bole, action "DECLINE_AND_TEXT" use karo aur param me excuse text do.
-            3. Peer Sync: Doosre phone par message bhejne ke liye "PEER_BROADCAST" use karo.
-            4. Tone: Confident, fast, natural Hinglish. User ko "$currentPetName" se address karo.
-            5. Earpiece Whisper: ${if (isNearEar) "User kaan par phone lagaye hue hai, whisper short concise voice me bolo." else "Normal responsive speaker tone."}
+            CRITICAL RULE:
+            Always return a valid raw JSON object. Do not include markdown blocks (```json) or conversational text outside the JSON.
             
-            CLOCK: $currentHour:00 hrs
-            Screen Vision: ${if (screenBytes != null) "Screen image attached. Extract errors, code snippets or analyze visual accurately." else "No image attached."}
+            ACTIONS SUPPORTED:
+            - APP_CONTROL: (param: "SCROLL_DOWN" | "SCROLL_UP" | "LIKE" | "COMMENT" | "SHARE" | element text to click)
+            - VIDEO_CONTROL: (param: "FORWARD" | "REWIND" | "PLAY_PAUSE")
+            - TYPE_AND_SEND: (param: text to type and submit immediately)
+            - LAUNCH: (param: app name e.g. "whatsapp", "instagram", "youtube", "settings", "termux")
+            - SAVE_CODE: (code_payload: clean python/js code extracted from screen, param: file name)
+            - DECLINE_AND_TEXT: (param: excuse message text)
+            - YOUTUBE: (param: video query or music title)
+            - WEB_SEARCH: (param: query)
+            - CHAT: (conversational reply)
             
-            MEMORY VAULT:
-            $storedMemories
-            $structuredFacts
+            USER INPUT: "$trimmed"
+            CLOCK: $currentHour:00
             
-            HISTORY:
-            $historyContext
-            
-            USER INPUT:
-            "$trimmed"
-            
-            OUTPUT RULES (RAW JSON ONLY, STRICTLY NO BACKTICKS):
+            JSON FORMAT:
             {
-              "thought": "Technical action reasoning and intent extraction",
-              "action": "APP_CONTROL | VIDEO_CONTROL | TYPE_AND_SEND | LAUNCH | YOUTUBE | WEB_SEARCH | ALARM | SAVE_CODE | DECLINE_AND_TEXT | PEER_BROADCAST | REMEMBER | CHAT",
-              "param": "Target parameter, button name, or text payload",
-              "new_pet_name": "",
-              "code_payload": "Agar SAVE_CODE hai toh yahan pure extracted python/js code likho, warna blank",
-              "remember_key": "Fact key if user shared personal detail",
-              "remember_value": "Fact value to preserve",
-              "reply": "Crisp, helpful Hinglish response"
+              "action": "APP_CONTROL | VIDEO_CONTROL | TYPE_AND_SEND | LAUNCH | SAVE_CODE | DECLINE_AND_TEXT | YOUTUBE | WEB_SEARCH | CHAT",
+              "param": "",
+              "code_payload": "",
+              "reply": "Short natural Hinglish response"
             }
         """.trimIndent()
 
         val aiRaw = try {
             aiClient.ask(systemPrompt, screenBytes)
         } catch (e: Exception) {
-            return@withContext "Network issue aayi $currentPetName, wapas try karenge?"
+            return@withContext "Network issue aayi $currentPetName, wapas boliye?"
         }
 
         val parsed = parseJsonResponse(aiRaw, trimmed, currentPetName)
-
-        if (parsed.rememberKey.isNotBlank() && parsed.rememberValue.isNotBlank()) {
-            saveMemory(parsed.rememberKey, parsed.rememberValue)
-            memoryVault.saveFact("${parsed.rememberKey}: ${parsed.rememberValue}")
-        }
-
         AgentAccessibilityService.instance?.triggerHeartbeatHaptic()
 
         val finalReply = when (parsed.action) {
-            "SAVE_CODE" -> {
-                val code = parsed.codePayload.ifBlank { "print('No code extracted')" }
-                saveCodeToFile(code, "script_${System.currentTimeMillis() % 1000}.py")
-                "Screen se code extract karke /sdcard/MiraScripts me save kar diya hai!"
-            }
-            "DECLINE_AND_TEXT" -> {
-                declineCallAndSendText(parsed.param)
-                "Call cut karke WhatsApp excuse message type kar diya."
-            }
-            "PEER_BROADCAST" -> {
-                val targetIp = getMemory("peer_ip") ?: "192.168.1.100"
-                peerSync.broadcastPeerMessage(targetIp, "TELEPATHY", parsed.param, currentPetName)
-                "Dost ke device par telepathy alert bhej diya."
+            "APP_CONTROL" -> {
+                handleUniversalAppAction(parsed.param)
+                parsed.reply.ifBlank { "Kar diya!" }
             }
             "VIDEO_CONTROL" -> {
                 handleVideoControl(parsed.param)
-                parsed.reply
-            }
-            "APP_CONTROL" -> {
-                handleUniversalAppAction(parsed.param)
-                parsed.reply
+                parsed.reply.ifBlank { "Video update kiya." }
             }
             "TYPE_AND_SEND" -> {
                 val ok = AgentAccessibilityService.instance?.typeAndSend(parsed.param) ?: false
-                if (ok) parsed.reply else "Screen par active chat box nahi mila type karne ke liye!"
+                if (ok) parsed.reply.ifBlank { "Bhej diya!" } else "Screen par active chat box nahi mila."
             }
             "LAUNCH" -> {
                 val pkg = getPackageByName(parsed.param)
                 if (pkg != null && isFinancialApp(pkg)) {
-                    "Security rules ki wajah se payment apps direct access nahi ho sakte."
+                    "Security rules ki wajah se banking apps direct control nahi ki ja sakti."
                 } else if (pkg != null) {
                     launchPackage(pkg)
-                    parsed.reply
+                    parsed.reply.ifBlank { "${parsed.param} open kar diya." }
                 } else {
-                    "${parsed.param} application phone me nahi mili."
+                    "${parsed.param} app phone me nahi mili."
                 }
             }
+            "SAVE_CODE" -> {
+                val code = parsed.codePayload.ifBlank { "print('No code extracted')" }
+                saveCodeToFile(code, "script_${System.currentTimeMillis() % 1000}.py")
+                "Screen ka code extract karke /sdcard/MiraScripts me save kar diya hai."
+            }
+            "DECLINE_AND_TEXT" -> {
+                declineCallAndSendText(parsed.param)
+                "Call reject karke excuse message bhej diya."
+            }
             "YOUTUBE" -> {
-                val query = if (parsed.param.isNotBlank()) parsed.param else getMemory("fav_song") ?: "Chill beats"
+                val query = if (parsed.param.isNotBlank()) parsed.param else "Coding lo-fi beats"
                 openYouTubeSearch(query)
-                parsed.reply
+                parsed.reply.ifBlank { "YouTube par chala diya." }
             }
             "WEB_SEARCH" -> {
                 openGoogleSearch(parsed.param)
-                parsed.reply
-            }
-            "ALARM" -> {
-                setQuickAlarm(parsed.param)
-                parsed.reply
+                parsed.reply.ifBlank { "Search kar diya." }
             }
             else -> parsed.reply
         }
 
         chatHistory.add(trimmed to finalReply)
-        if (chatHistory.size > 16) chatHistory.removeAt(0)
+        if (chatHistory.size > 12) chatHistory.removeAt(0)
 
         finalReply
     }
 
-    private fun saveCodeToFile(code: String, filename: String) {
-        try {
-            val dir = File(Environment.getExternalStorageDirectory(), "MiraScripts")
-            if (!dir.exists()) dir.mkdirs()
-            val file = File(dir, filename)
-            file.writeText(code)
-        } catch (_: Exception) {}
-    }
-
-    private fun declineCallAndSendText(excuse: String) {
-        val service = AgentAccessibilityService.instance ?: return
-        service.clickByTextOrDescription(listOf("decline", "reject", "dismiss", "cut"))
-        service.typeAndSend(excuse.ifBlank { "Thoda busy hoon, baad me call karta hoon." })
-    }
-
     private fun handleLocalOfflineCommands(lower: String): String? {
         val petName = prefs.userPetName
+        val service = AgentAccessibilityService.instance
+
+        // Reels & Scrolling
+        if (lower.contains("scroll") || lower.contains("next") || lower.contains("aage badhao") || lower.contains("dusra dikhao")) {
+            service?.scrollForward()
+            return "Next scroll kar diya!"
+        }
+        if (lower.contains("peeche scroll") || lower.contains("previous reel") || lower.contains("wapas upar")) {
+            service?.scrollBackward()
+            return "Upar scroll kar diya."
+        }
+        if (lower.contains("like") || lower.contains("heart") || lower.contains("pasand")) {
+            service?.likeCurrentContent()
+            return "Like kar diya!"
+        }
+
+        // Fast Video Controls
+        if (lower.contains("forward") || lower.contains("aage karo")) {
+            service?.forwardVideo()
+            return "10 second forward kar diya."
+        }
+        if (lower.contains("rewind") || lower.contains("peeche karo")) {
+            service?.rewindVideo()
+            return "10 second rewind kar diya."
+        }
+
+        // Direct Text Send
+        if (lower.startsWith("send ") || lower.startsWith("type ") || lower.startsWith("bhejo ")) {
+            val content = lower.replaceFirst("send ", "").replaceFirst("type ", "").replaceFirst("bhejo ", "")
+            val ok = service?.typeAndSend(content) ?: false
+            return if (ok) "Type karke send kar diya!" else "Koi active chat field nahi mila."
+        }
+
+        // Hardware Controls
         if (lower.contains("torch") || lower.contains("flashlight")) {
-            return if (lower.contains("on") || lower.contains("chalao") || lower.contains("jalao")) {
+            return if (lower.contains("on") || lower.contains("jalao")) {
                 toggleFlashlight(true)
-                "Torch on kar di hai $petName."
+                "Torch on kar di $petName."
             } else if (lower.contains("off") || lower.contains("band")) {
                 toggleFlashlight(false)
                 "Torch band kar di."
@@ -264,7 +247,7 @@ class AgentEngine(
         if (lower.contains("volume") || lower.contains("aawaz")) {
             if (lower.contains("up") || lower.contains("badhao") || lower.contains("tez")) {
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
-                return "Volume badha diya hai."
+                return "Volume badha diya."
             }
             if (lower.contains("down") || lower.contains("kam") || lower.contains("slow")) {
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
@@ -272,28 +255,50 @@ class AgentEngine(
             }
             if (lower.contains("mute") || lower.contains("chup")) {
                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
-                return "Media mute kar diya gaya hai."
+                return "Mute kar diya."
             }
         }
 
+        // Navigation
         if (lower == "home" || lower == "home screen" || lower == "bahar aao") {
-            AgentAccessibilityService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
-            return "Home screen par switch kar diya."
+            service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+            return "Home screen par aa gaye."
         }
         if (lower == "back" || lower == "piche jao" || lower == "wapas") {
-            AgentAccessibilityService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-            return "Back step execute kiya."
+            service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            return "Back kar diya."
         }
         if (lower == "recent" || lower == "recent apps") {
-            AgentAccessibilityService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
-            return "Recents screen open kar di."
+            service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
+            return "Recent apps open kar di."
         }
         if (lower.contains("screenshot")) {
-            AgentAccessibilityService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
-            return "Screenshot capture kar liya hai."
+            service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+            return "Screenshot capture kar liya."
         }
 
         return null
+    }
+
+    private fun handleUniversalAppAction(target: String) {
+        val service = AgentAccessibilityService.instance ?: return
+        when (target.uppercase()) {
+            "SCROLL_DOWN", "NEXT" -> service.scrollForward()
+            "SCROLL_UP", "PREVIOUS" -> service.scrollBackward()
+            "LIKE" -> service.likeCurrentContent()
+            "SHARE" -> service.clickByTextOrDescription(listOf("share", "send", "bhejo"))
+            "COMMENT" -> service.clickByTextOrDescription(listOf("comment", "reply"))
+            else -> service.clickAnyElementOnScreen(target)
+        }
+    }
+
+    private fun handleVideoControl(command: String) {
+        val service = AgentAccessibilityService.instance ?: return
+        when (command.uppercase()) {
+            "FORWARD" -> service.forwardVideo()
+            "REWIND" -> service.rewindVideo()
+            "PLAY_PAUSE", "PLAY", "PAUSE" -> service.clickByTextOrDescription(listOf("play", "pause", "video"))
+        }
     }
 
     private fun toggleFlashlight(status: Boolean) {
@@ -304,42 +309,25 @@ class AgentEngine(
         } catch (_: Exception) {}
     }
 
-    private fun handleVideoControl(command: String) {
+    private fun declineCallAndSendText(excuse: String) {
         val service = AgentAccessibilityService.instance ?: return
-        when (command.uppercase()) {
-            "FORWARD" -> service.forwardVideo()
-            "REWIND" -> service.rewindVideo()
-            "PLAY_PAUSE", "PLAY", "PAUSE" -> service.clickByTextOrDescription(listOf("play", "pause", "video player", "touch to play"))
-            "FULL_SCREEN" -> service.clickByTextOrDescription(listOf("full screen", "fullscreen", "maximize"))
-        }
+        service.clickByTextOrDescription(listOf("decline", "reject", "dismiss", "cut"))
+        service.typeAndSend(excuse.ifBlank { "Thoda busy hoon, baad me call karta hoon." })
     }
 
-    private fun handleUniversalAppAction(target: String) {
-        val service = AgentAccessibilityService.instance ?: return
-        when (target.uppercase()) {
-            "SCROLL_DOWN", "NEXT" -> service.scrollForward()
-            "SCROLL_UP", "PREVIOUS" -> service.scrollBackward()
-            "LIKE" -> service.clickByTextOrDescription(listOf("like", "heart", "thumbs up", "pasand"))
-            "SUBSCRIBE" -> service.clickByTextOrDescription(listOf("subscribe", "subscribed", "bell"))
-            "SHARE" -> service.clickByTextOrDescription(listOf("share", "send", "bhejo"))
-            "COMMENT" -> service.clickByTextOrDescription(listOf("comment", "reply", "add a comment"))
-            "SAVE" -> service.clickByTextOrDescription(listOf("save", "bookmark", "collection"))
-            else -> service.clickAnyElementOnScreen(target)
-        }
-    }
-
-    private fun isFinancialApp(pkg: String): Boolean {
-        val lower = pkg.lowercase()
-        return blockedFinancialPackages.any { lower.contains(it) } ||
-                lower.contains("bank") || lower.contains("upi") || lower.contains("wallet")
+    private fun saveCodeToFile(code: String, filename: String) {
+        try {
+            val dir = File(Environment.getExternalStorageDirectory(), "MiraScripts")
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, filename)
+            file.writeText(code)
+        } catch (_: Exception) {}
     }
 
     private data class ParsedAction(
         val action: String,
         val param: String,
         val codePayload: String,
-        val rememberKey: String,
-        val rememberValue: String,
         val reply: String
     )
 
@@ -354,91 +342,31 @@ class AgentEngine(
                     action = obj.optString("action", "CHAT").uppercase(),
                     param = obj.optString("param", ""),
                     codePayload = obj.optString("code_payload", ""),
-                    rememberKey = obj.optString("remember_key", ""),
-                    rememberValue = obj.optString("remember_value", ""),
-                    reply = obj.optString("reply", "Haan $petName, boliye kya karna hai?")
+                    reply = obj.optString("reply", "Haan bolo!")
                 )
             } else {
-                fallbackDeducer(raw, originalInput, petName)
+                fallbackDeducer(raw, originalInput)
             }
         } catch (_: Exception) {
-            fallbackDeducer(raw, originalInput, petName)
+            fallbackDeducer(raw, originalInput)
         }
     }
 
-    private fun fallbackDeducer(rawReply: String, input: String, petName: String): ParsedAction {
+    private fun fallbackDeducer(rawReply: String, input: String): ParsedAction {
         val lower = input.lowercase()
         return when {
-            lower.contains("forward") || lower.contains("aage karo") -> {
-                ParsedAction("VIDEO_CONTROL", "FORWARD", "", "", "", "Video forward kar diya.")
-            }
-            lower.contains("rewind") || lower.contains("peeche") -> {
-                ParsedAction("VIDEO_CONTROL", "REWIND", "", "", "", "Video rewind kar diya.")
-            }
-            lower.contains("scroll") || lower.contains("next") -> {
-                ParsedAction("APP_CONTROL", "SCROLL_DOWN", "", "", "", "Next scroll kar diya.")
-            }
-            lower.contains("like") -> {
-                ParsedAction("APP_CONTROL", "LIKE", "", "", "", "Like kar diya.")
-            }
-            else -> {
-                ParsedAction("CHAT", "", "", "", "", if (rawReply.isNotBlank()) rawReply else "Haan $petName, main sun rahi hoon!")
-            }
+            lower.contains("scroll") || lower.contains("next") -> ParsedAction("APP_CONTROL", "SCROLL_DOWN", "", "Next reel laga di!")
+            lower.contains("like") -> ParsedAction("APP_CONTROL", "LIKE", "", "Like kar diya!")
+            lower.contains("forward") -> ParsedAction("VIDEO_CONTROL", "FORWARD", "", "Forward kar diya.")
+            lower.contains("rewind") -> ParsedAction("VIDEO_CONTROL", "REWIND", "", "Rewind kar diya.")
+            else -> ParsedAction("CHAT", "", "", if (rawReply.isNotBlank()) rawReply else "Sun rahi hoon, boliye!")
         }
     }
 
-    private fun saveMemory(key: String, value: String) {
-        try {
-            val current = JSONObject(prefs.agentMemories.ifBlank { "{}" })
-            current.put(key, value)
-            prefs.agentMemories = current.toString()
-        } catch (_: Exception) {}
-    }
-
-    private fun getMemory(key: String): String? {
-        return try {
-            val current = JSONObject(prefs.agentMemories.ifBlank { "{}" })
-            if (current.has(key)) current.getString(key) else null
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun openYouTubeSearch(query: String) {
-        try {
-            val intent = Intent(Intent.ACTION_SEARCH).apply {
-                setPackage("com.google.android.youtube")
-                putExtra("query", query)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(intent)
-        } catch (_: Exception) {
-            val encoded = URLEncoder.encode(query, "UTF-8")
-            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$encoded")).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(webIntent)
-        }
-    }
-
-    private fun openGoogleSearch(query: String) {
-        try {
-            val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
-                putExtra(SearchManager.QUERY, query)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(intent)
-        } catch (_: Exception) {}
-    }
-
-    private fun setQuickAlarm(timeDesc: String) {
-        try {
-            val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                putExtra(AlarmClock.EXTRA_MESSAGE, "Mira Task")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(intent)
-        } catch (_: Exception) {}
+    private fun isFinancialApp(pkg: String): Boolean {
+        val lower = pkg.lowercase()
+        return blockedFinancialPackages.any { lower.contains(it) } ||
+                lower.contains("bank") || lower.contains("upi") || lower.contains("wallet")
     }
 
     private fun getPackageByName(name: String): String? {
@@ -457,5 +385,32 @@ class AgentEngine(
         if (launchIntent != null) {
             context.startActivity(launchIntent)
         }
+    }
+
+    private fun openYouTubeSearch(query: String) {
+        try {
+            val intent = Intent(Intent.ACTION_SEARCH).apply {
+                setPackage("com.google.android.youtube")
+                putExtra("query", query)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            val encoded = URLEncoder.encode(query, "UTF-8")
+            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("[https://www.youtube.com/results?search_query=$encoded](https://www.youtube.com/results?search_query=$encoded)")).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(webIntent)
+        }
+    }
+
+    private fun openGoogleSearch(query: String) {
+        try {
+            val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+                putExtra(SearchManager.QUERY, query)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {}
     }
 }
