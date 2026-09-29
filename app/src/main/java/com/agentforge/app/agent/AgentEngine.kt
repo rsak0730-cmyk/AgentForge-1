@@ -62,14 +62,14 @@ class AgentEngine(
         val trimmed = userInput.trim()
         val lower = trimmed.lowercase()
 
-        // 1. FAST LOCAL OFFLINE COMMANDS
+        // 1. ULTRA FAST-PATH ROUTER (0-5ms Local System & Hardware Execution)
         val offlineResult = handleLocalOfflineCommands(lower)
         if (offlineResult != null) {
             chatHistory.add(trimmed to offlineResult)
             return@withContext offlineResult
         }
 
-        // 2. FOCUS TIMER
+        // 2. FOCUS TIMER DIRECT ROUTER
         if (lower.contains("focus") || lower.contains("pomodoro") || lower.contains("padhai")) {
             val minutes = Regex("\\d+").find(lower)?.value?.toIntOrNull() ?: 25
             AgentAccessibilityService.startFocusMode(minutes)
@@ -85,7 +85,7 @@ class AgentEngine(
             return@withContext msg
         }
 
-        // 3. CAPTURE ACTIVE SCREEN & TEMPORAL MEMORY LOGGING
+        // 3. PASSIVE SCREEN MEMORY CACHE & VISION GRAB
         val screenElementsJson = AgentAccessibilityService.instance?.scrapeScreenElements() ?: "[]"
         memoryVault.cacheScreenText(screenElementsJson)
 
@@ -116,21 +116,25 @@ class AgentEngine(
         }
 
         val systemPrompt = """
-            You are "$currentAssistantName", an autonomous, next-gen Android OS companion and phone co-pilot.
-            You must understand normal conversations, questions, casual commands, and execute complex multi-step workflows.
+            You are "$currentAssistantName", an autonomous, high-speed Android OS companion and phone co-pilot.
+            Carefully distinguish between QUESTIONS, COMPLAINTS, and PHYSICAL ACTION COMMANDS.
             
             RULES & INTELLIGENCE:
             1. QUESTION vs ACTION:
-               - If user is merely asking a question or explanation ("kaise karein", "explain karo"), DO NOT output UI actions. Keep "steps": [] empty.
+               - If user asks questions ("kaise karein", "how to", "batao"), keep "steps": [] empty.
             2. TEMPORAL SCREEN RECALL:
                - Recent Past Screen Activity:
                $recentScreenContext
             3. ZERO-SHOT GHOST TAP:
-               - If an interactive element on screen has no text label (like icons, heart buttons, image canvas), return its approximate normalized coordinates:
+               - If an interactive item has no text label, return its normalized coordinates:
                  {"action": "GHOST_TAP", "cx_pct": 0.5, "cy_pct": 0.5}
-            4. SELF-HEALING PYTHON CODE RUNNER:
-               - If user needs complex computation, local file tasks, or data extraction, write clean Python code in:
+            4. PYTHON SCRIPT RUNNER:
+               - For complex automation or local scripts, generate python in:
                  {"action": "RUN_PYTHON", "code_payload": "import os\n..."}
+            
+            SCROLL DIRECTION PHYSICS:
+            - To view lower/next content ("niche dikhao", "scroll down", "next reel") -> Execute SWIPE UP.
+            - To view upper/previous content ("upar karo", "scroll up", "previous reel") -> Execute SWIPE DOWN.
             
             ACTIVE ON-SCREEN UI TREE:
             $screenElementsJson
@@ -173,7 +177,7 @@ class AgentEngine(
         val service = AgentAccessibilityService.instance
         service?.triggerHeartbeatHaptic()
 
-        // 4. SEQUENTIAL EXECUTION LOOP
+        // 4. INTELLIGENT SEQUENTIAL EXECUTION LOOP
         for (step in parsed.steps) {
             if (step.action == "LAUNCH") {
                 val pkg = getPackageByName(step.param)
@@ -270,6 +274,7 @@ class AgentEngine(
         }
     }
 
+    // ---------------- LOCAL FAST-PATH ROUTER (5ms Execution, Zero Network Delay) ----------------
     private fun handleLocalOfflineCommands(lower: String): String? {
         val petName = prefs.userPetName
         val service = AgentAccessibilityService.instance
@@ -278,6 +283,63 @@ class AgentEngine(
             return null
         }
 
+        // 1. System Deep Toggles via Shizuku
+        if (lower.contains("data") || lower.contains("internet")) {
+            if (lower.contains("on") || lower.contains("chalu")) {
+                shizuku.setMobileData(true)
+                return "Mobile data on kar diya."
+            } else if (lower.contains("off") || lower.contains("band")) {
+                shizuku.setMobileData(false)
+                return "Mobile data band kar diya."
+            }
+        }
+
+        if (lower.contains("wifi") || lower.contains("wi-fi")) {
+            if (lower.contains("on") || lower.contains("chalu")) {
+                shizuku.setWifi(true)
+                return "Wi-Fi chalu kar diya."
+            } else if (lower.contains("off") || lower.contains("band")) {
+                shizuku.setWifi(false)
+                return "Wi-Fi band kar diya."
+            }
+        }
+
+        if (lower.contains("bluetooth")) {
+            if (lower.contains("on") || lower.contains("chalu")) {
+                shizuku.setBluetooth(true)
+                return "Bluetooth on kar diya."
+            } else if (lower.contains("off") || lower.contains("band")) {
+                shizuku.setBluetooth(false)
+                return "Bluetooth band kar diya."
+            }
+        }
+
+        if (lower.contains("battery saver") || lower.contains("power saver")) {
+            if (lower.contains("on") || lower.contains("lagao")) {
+                shizuku.setPowerSaver(true)
+                return "Power saving mode on kar diya."
+            } else if (lower.contains("off") || lower.contains("hatao")) {
+                shizuku.setPowerSaver(false)
+                return "Power saving mode band kar diya."
+            }
+        }
+
+        if (lower.contains("lock karo") || lower.contains("phone band karo")) {
+            shizuku.lockScreen()
+            return "Phone lock kar diya."
+        }
+
+        if (lower.contains("brightness") || lower.contains("roshni")) {
+            if (lower.contains("full") || lower.contains("tez") || lower.contains("badhao")) {
+                shizuku.setBrightness(240)
+                return "Brightness badha di."
+            } else if (lower.contains("kam") || lower.contains("low")) {
+                shizuku.setBrightness(40)
+                return "Brightness kam kar di."
+            }
+        }
+
+        // 2. Hardware Navigation & Media
         if (lower.contains("scroll") || lower.contains("next") || lower.contains("aage badhao") || lower.contains("dusra")) {
             service?.scrollForward()
             return "Next scroll kar diya!"

@@ -1,6 +1,5 @@
 package com.agentforge.app.automation
 
-import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import rikka.shizuku.Shizuku
@@ -73,6 +72,37 @@ class ShizukuBridge(private val context: Context) {
         }
     }
 
+    // ---------------- DEEP HARDWARE & SYSTEM TOGGLES (BIXBY LEVEL) ----------------
+    fun setMobileData(enable: Boolean): Boolean {
+        val state = if (enable) "enable" else "disable"
+        return !runShellCommand("svc data $state").startsWith("ERR")
+    }
+
+    fun setWifi(enable: Boolean): Boolean {
+        val state = if (enable) "enable" else "disable"
+        return !runShellCommand("svc wifi $state").startsWith("ERR")
+    }
+
+    fun setBluetooth(enable: Boolean): Boolean {
+        val state = if (enable) "enable" else "disable"
+        return !runShellCommand("cmd bluetooth_manager $state").startsWith("ERR")
+    }
+
+    fun setPowerSaver(enable: Boolean): Boolean {
+        val state = if (enable) "1" else "0"
+        return !runShellCommand("settings put global low_power $state").startsWith("ERR")
+    }
+
+    fun setBrightness(level: Int): Boolean {
+        val clamped = level.coerceIn(0, 255)
+        return !runShellCommand("settings put system screen_brightness $clamped").startsWith("ERR")
+    }
+
+    fun lockScreen(): Boolean {
+        return !runShellCommand("input keyevent 26").startsWith("ERR")
+    }
+
+    // ---------------- INPUT & TOUCH INJECTION ----------------
     fun inputTap(x: Float, y: Float): Boolean {
         val res = runShellCommand("input tap ${x.toInt()} ${y.toInt()}")
         return !res.startsWith("ERR")
