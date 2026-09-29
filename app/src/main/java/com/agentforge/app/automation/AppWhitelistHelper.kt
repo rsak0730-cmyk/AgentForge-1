@@ -9,7 +9,6 @@ import android.provider.Settings
 class AppWhitelistHelper(private val context: Context, private val shizuku: ShizukuBridge) {
 
     fun ensureBackgroundSurvival() {
-        // 1. Standard Battery Optimization Exemption
         try {
             val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!pm.isIgnoringBatteryOptimizations(context.packageName)) {
@@ -21,7 +20,6 @@ class AppWhitelistHelper(private val context: Context, private val shizuku: Shiz
             }
         } catch (_: Exception) {}
 
-        // 2. Privileged Shell Whitelist injection (Samsung One UI Doze Guard)
         if (shizuku.hasPermission()) {
             val pkg = context.packageName
             shizuku.run("dumpsys deviceidle whitelist +$pkg")

@@ -94,8 +94,6 @@ class AgentEngine(
         }
 
         val currentAssistantName = prefs.name
-        val storedMemories = prefs.agentMemories
-        val structuredFacts = memoryVault.getMemorySummary()
         val currentPetName = prefs.userPetName
         val cal = Calendar.getInstance()
         val currentHour = cal.get(Calendar.HOUR_OF_DAY)
@@ -168,7 +166,7 @@ class AgentEngine(
             "CLICK_NODE" -> {
                 val ok = service?.clickAnyElementOnScreen(step.param) ?: false
                 if (!ok && (step.cxPct > 0f || step.cyPct > 0f)) {
-                    if (!service!!.clickAtPercentage(step.cxPct, step.cyPct) && shizuku.isReady()) {
+                    if (service != null && !service.clickAtPercentage(step.cxPct, step.cyPct) && shizuku.isReady()) {
                         val realW = service.resources.displayMetrics.widthPixels
                         val realH = service.resources.displayMetrics.heightPixels
                         shizuku.inputTap(step.cxPct * realW, step.cyPct * realH)
@@ -177,8 +175,8 @@ class AgentEngine(
             }
             "CLICK_AT" -> {
                 val ok = service?.clickAtPercentage(step.cxPct, step.cyPct) ?: false
-                if (!ok && shizuku.isReady()) {
-                    val realW = service!!.resources.displayMetrics.widthPixels
+                if (!ok && shizuku.isReady() && service != null) {
+                    val realW = service.resources.displayMetrics.widthPixels
                     val realH = service.resources.displayMetrics.heightPixels
                     shizuku.inputTap(step.cxPct * realW, step.cyPct * realH)
                 }

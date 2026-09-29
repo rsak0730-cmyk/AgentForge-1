@@ -1,5 +1,6 @@
 package com.agentforge.app.automation
 
+import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import rikka.shizuku.Shizuku
@@ -26,10 +27,39 @@ class ShizukuBridge(private val context: Context) {
         }
     }
 
+    fun hasPermission(): Boolean {
+        return isReady()
+    }
+
+    fun requestPermission(requestCode: Int = 1001) {
+        try {
+            if (Shizuku.pingBinder()) {
+                if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                    Shizuku.requestPermission(requestCode)
+                }
+            }
+        } catch (_: Throwable) {}
+    }
+
+    fun connect(): Boolean {
+        return isReady()
+    }
+
+    fun run(command: String): String {
+        return runShellCommand(command)
+    }
+
     fun runShellCommand(command: String): String {
         if (!isReady()) return "ERR_SHIZUKU_NOT_READY"
         return try {
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
+            val method = Shizuku::class.java.getMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            val process = method.invoke(null, arrayOf("sh", "-c", command), null, null) as Process
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val output = StringBuilder()
             var line: String?

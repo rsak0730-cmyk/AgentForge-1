@@ -8,17 +8,14 @@ import com.agentforge.app.service.AgentAccessibilityService
 class CallAutoAcceptManager(private val context: Context, private val shizuku: ShizukuBridge) {
 
     fun acceptIncomingCall(): Boolean {
-        // Method 1: TelecomManager for Android 8.0+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
                 val tm = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
                 tm?.acceptRingingCall()
-                AgentAccessibilityService.instance?.showIsland("Call Connected (Intercom)")
+                AgentAccessibilityService.instance?.showIsland("Call Connected")
                 return true
             } catch (_: SecurityException) {}
         }
-
-        // Method 2: Privileged Shell Intercom Injection via Shizuku
         return try {
             shizuku.run("input keyevent KEYCODE_HEADSETHOOK")
             AgentAccessibilityService.instance?.showIsland("Call Answered via Shizuku")
