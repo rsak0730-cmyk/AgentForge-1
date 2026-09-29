@@ -168,7 +168,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
 
         updateServiceNotification("🎙️ Listening...")
         AgentAccessibilityService.instance?.showIsland("🎙️ Listening...")
-        mainHandler.postDelayed(silenceTimeoutRunnable, 4800)
+        mainHandler.postDelayed(silenceTimeoutRunnable, 5200)
 
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
@@ -217,7 +217,12 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                // Audio clarity and pause resilience tweaks
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1800L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 900L)
             }
             recognizer?.startListening(intent)
         } catch (_: Exception) {
@@ -264,7 +269,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             }
             override fun onDone(utteranceId: String?) {
                 isSpeaking = false
-                // 450ms Silence Delay to kill acoustic echo before opening mic
+                // Echo safe silence buffer before reactivating microphone
                 mainHandler.postDelayed({
                     if (isServiceAlive) {
                         startOnDemandListening(isFollowUp = true)

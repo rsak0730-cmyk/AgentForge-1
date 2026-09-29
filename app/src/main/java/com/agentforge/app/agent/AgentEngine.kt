@@ -58,11 +58,44 @@ class AgentEngine(
         "com.hdfcbank.android"
     )
 
+    // Phonetic & STT Misinterpretation Healing Map
+    private val phoneticAliasMap = mapOf(
+        "tata" to "data",
+        "deta" to "data",
+        "gata" to "data",
+        "bata" to "data",
+        "waifai" to "wifi",
+        "bhai bhai" to "wifi",
+        "wi fi" to "wifi",
+        "blue tooth" to "bluetooth",
+        "blutut" to "bluetooth",
+        "toras" to "torch",
+        "taurch" to "torch",
+        "taurs" to "torch",
+        "flash light" to "flashlight",
+        "sukrol" to "scroll",
+        "iscol" to "scroll",
+        "skrol" to "scroll",
+        "lik" to "like",
+        "laik" to "like",
+        "termaks" to "termux",
+        "tarmux" to "termux"
+    )
+
+    private fun sanitizePhoneticSpokenText(input: String): String {
+        var clean = input.lowercase()
+        for ((wrong, correct) in phoneticAliasMap) {
+            clean = clean.replace(Regex("\\b$wrong\\b"), correct)
+        }
+        return clean
+    }
+
     suspend fun execute(userInput: String): String = withContext(Dispatchers.IO) {
         val trimmed = userInput.trim()
-        val lower = trimmed.lowercase()
+        val normalizedInput = sanitizePhoneticSpokenText(trimmed)
+        val lower = normalizedInput.lowercase()
 
-        // 1. FAST LOCAL OFFLINE COMMANDS
+        // 1. FAST LOCAL OFFLINE ROUTER (5ms Phonetically Cleaned Execution)
         val offlineResult = handleLocalOfflineCommands(lower)
         if (offlineResult != null) {
             chatHistory.add(trimmed to offlineResult)
@@ -85,7 +118,7 @@ class AgentEngine(
             return@withContext msg
         }
 
-        // 3. CAPTURE ACTIVE SCREEN STATE & MEMORY LOGGING
+        // 3. CAPTURE ACTIVE SCREEN STATE & CACHE
         val screenElementsJson = AgentAccessibilityService.instance?.scrapeScreenElements() ?: "[]"
         memoryVault.cacheScreenText(screenElementsJson)
 
@@ -116,8 +149,12 @@ class AgentEngine(
         }
 
         val systemPrompt = """
-            You are "$currentAssistantName", an ultra-autonomous next-gen Android OS companion.
-            You possess advanced tools: Shizuku privileged shell, Termux Python runner, Media downloader (yt-dlp/ffmpeg), and live web search.
+            You are "$currentAssistantName", an ultra-autonomous next-gen Android OS companion and phone co-pilot.
+            
+            AUDIO CLARITY & SPEECH TYPO RECOVERY:
+            - The user input comes directly from Android voice speech recognition.
+            - It might have minor phonetic misinterpretations or accents (e.g. "tata/deta" for data, "waifai" for wifi, "skrol" for scroll).
+            - Intelligently deduce the user's intended phone actions from context.
             
             RULES & INTELLIGENCE:
             1. QUESTION vs ACTION:
@@ -125,11 +162,9 @@ class AgentEngine(
             2. TEMPORAL SCREEN RECALL:
                - Past Screen: $recentScreenContext
             3. MEDIA DOWNLOAD TRIGGER:
-               - If user wants to save audio/video from reel/screen:
-                 {"action": "DOWNLOAD_MEDIA", "param": "url_or_screen_link", "mode": "audio | video"}
+               - For saving reels/videos: {"action": "DOWNLOAD_MEDIA", "param": "url_or_screen_link", "mode": "audio | video"}
             4. LIVE WEB SCRAPER:
-               - If user asks for real-time live info/scores/news:
-                 {"action": "WEB_SEARCH", "param": "search query"}
+               - Real-time live info/scores/news: {"action": "WEB_SEARCH", "param": "search query"}
             5. ZERO-SHOT GHOST TAP:
                - Untagged UI targets: {"action": "GHOST_TAP", "cx_pct": 0.5, "cy_pct": 0.5}
             
@@ -164,7 +199,7 @@ class AgentEngine(
               ]
             }
             
-            USER INPUT: "$trimmed"
+            USER INPUT: "$normalizedInput" (Raw: "$trimmed")
             CLOCK: $currentHour:00 hrs
             HISTORY:
             $historyContext
@@ -176,11 +211,11 @@ class AgentEngine(
             return@withContext "Network issue aayi $currentPetName, wapas boliye na?"
         }
 
-        val parsed = parseJsonResponse(aiRaw, trimmed)
+        val parsed = parseJsonResponse(aiRaw, normalizedInput)
         val service = AgentAccessibilityService.instance
         service?.triggerHeartbeatHaptic()
 
-        // 4. SEQUENTIAL EXECUTION LOOP
+        // 4. INTELLIGENT SEQUENTIAL EXECUTION LOOP
         for (step in parsed.steps) {
             if (step.action == "LAUNCH") {
                 val pkg = getPackageByName(step.param)
@@ -294,7 +329,7 @@ class AgentEngine(
             return null
         }
 
-        // Shizuku Direct Fast Toggles
+        // Shizuku Direct Fast Toggles with Phonetic Tolerance
         if (lower.contains("data") || lower.contains("internet")) {
             if (lower.contains("on") || lower.contains("chalu")) {
                 shizuku.setMobileData(true)
@@ -305,7 +340,7 @@ class AgentEngine(
             }
         }
 
-        if (lower.contains("wifi") || lower.contains("wi-fi")) {
+        if (lower.contains("wifi")) {
             if (lower.contains("on") || lower.contains("chalu")) {
                 shizuku.setWifi(true)
                 return "Wi-Fi chalu kar diya."
