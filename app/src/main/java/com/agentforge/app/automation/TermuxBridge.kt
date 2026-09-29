@@ -21,7 +21,7 @@ class TermuxBridge(private val context: Context) {
         } catch (_: Throwable) {}
     }
 
-    // Dynamic self-healing runner: Writes python code and fires via bash script wrapper
+    // Dynamic Python Script Runner
     fun runDynamicPython(pythonCode: String, scriptTag: String = "agent_dynamic") {
         try {
             val baseDir = File(Environment.getExternalStorageDirectory(), "MiraScripts")
@@ -30,8 +30,33 @@ class TermuxBridge(private val context: Context) {
             val pyFile = File(baseDir, "$scriptTag.py")
             pyFile.writeText(pythonCode)
 
-            // Trigger Termux execution of python script
             executeScript("runner.sh", arrayOf(pyFile.absolutePath))
         } catch (_: Throwable) {}
+    }
+
+    // Media Engine: yt-dlp & ffmpeg trigger for video/audio downloading
+    fun downloadMedia(url: String, extractAudioOnly: Boolean = false) {
+        val audioFlag = if (extractAudioOnly) "audio" else "video"
+        executeScript("download_media.sh", arrayOf(url, audioFlag))
+    }
+
+    // Headless Live Web Scraper Search
+    fun triggerWebSearch(query: String) {
+        val pythonSearchCode = """
+            import urllib.request
+            import json
+            import urllib.parse
+            
+            q = urllib.parse.quote("$query")
+            url = f"https://html.duckduckgo.com/html/?q={q}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            try:
+                html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+                with open('/sdcard/mira_search_result.txt', 'w') as f:
+                    f.write(html[:1000])
+            except Exception as e:
+                pass
+        """.trimIndent()
+        runDynamicPython(pythonSearchCode, "search_job")
     }
 }

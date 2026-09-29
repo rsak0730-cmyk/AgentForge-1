@@ -62,7 +62,7 @@ class AgentEngine(
         val trimmed = userInput.trim()
         val lower = trimmed.lowercase()
 
-        // 1. ULTRA FAST-PATH ROUTER (0-5ms Local System & Hardware Execution)
+        // 1. FAST LOCAL OFFLINE COMMANDS
         val offlineResult = handleLocalOfflineCommands(lower)
         if (offlineResult != null) {
             chatHistory.add(trimmed to offlineResult)
@@ -85,7 +85,7 @@ class AgentEngine(
             return@withContext msg
         }
 
-        // 3. PASSIVE SCREEN MEMORY CACHE & VISION GRAB
+        // 3. CAPTURE ACTIVE SCREEN STATE & MEMORY LOGGING
         val screenElementsJson = AgentAccessibilityService.instance?.scrapeScreenElements() ?: "[]"
         memoryVault.cacheScreenText(screenElementsJson)
 
@@ -116,25 +116,26 @@ class AgentEngine(
         }
 
         val systemPrompt = """
-            You are "$currentAssistantName", an autonomous, high-speed Android OS companion and phone co-pilot.
-            Carefully distinguish between QUESTIONS, COMPLAINTS, and PHYSICAL ACTION COMMANDS.
+            You are "$currentAssistantName", an ultra-autonomous next-gen Android OS companion.
+            You possess advanced tools: Shizuku privileged shell, Termux Python runner, Media downloader (yt-dlp/ffmpeg), and live web search.
             
             RULES & INTELLIGENCE:
             1. QUESTION vs ACTION:
-               - If user asks questions ("kaise karein", "how to", "batao"), keep "steps": [] empty.
+               - If user is asking questions ("kaise karein", "how to"), keep "steps": [] empty.
             2. TEMPORAL SCREEN RECALL:
-               - Recent Past Screen Activity:
-               $recentScreenContext
-            3. ZERO-SHOT GHOST TAP:
-               - If an interactive item has no text label, return its normalized coordinates:
-                 {"action": "GHOST_TAP", "cx_pct": 0.5, "cy_pct": 0.5}
-            4. PYTHON SCRIPT RUNNER:
-               - For complex automation or local scripts, generate python in:
-                 {"action": "RUN_PYTHON", "code_payload": "import os\n..."}
+               - Past Screen: $recentScreenContext
+            3. MEDIA DOWNLOAD TRIGGER:
+               - If user wants to save audio/video from reel/screen:
+                 {"action": "DOWNLOAD_MEDIA", "param": "url_or_screen_link", "mode": "audio | video"}
+            4. LIVE WEB SCRAPER:
+               - If user asks for real-time live info/scores/news:
+                 {"action": "WEB_SEARCH", "param": "search query"}
+            5. ZERO-SHOT GHOST TAP:
+               - Untagged UI targets: {"action": "GHOST_TAP", "cx_pct": 0.5, "cy_pct": 0.5}
             
             SCROLL DIRECTION PHYSICS:
-            - To view lower/next content ("niche dikhao", "scroll down", "next reel") -> Execute SWIPE UP.
-            - To view upper/previous content ("upar karo", "scroll up", "previous reel") -> Execute SWIPE DOWN.
+            - View lower content ("niche dikhao", "scroll down") -> SWIPE UP.
+            - View upper content ("upar karo", "scroll up") -> SWIPE DOWN.
             
             ACTIVE ON-SCREEN UI TREE:
             $screenElementsJson
@@ -146,6 +147,8 @@ class AgentEngine(
             - SWIPE: {"action": "SWIPE", "param": "UP | DOWN | LEFT | RIGHT"}
             - TYPE_AND_SEND: {"action": "TYPE_AND_SEND", "param": "text to type"}
             - LAUNCH: {"action": "LAUNCH", "param": "app name"}
+            - DOWNLOAD_MEDIA: {"action": "DOWNLOAD_MEDIA", "param": "url", "mode": "audio | video"}
+            - WEB_SEARCH: {"action": "WEB_SEARCH", "param": "query"}
             - RUN_PYTHON: {"action": "RUN_PYTHON", "code_payload": "clean python script"}
             - APP_OPS: {"action": "APP_OPS", "pkg": "package.name", "op": "RECORD_AUDIO | CAMERA | POST_NOTIFICATION", "mode": "allow | ignore"}
             - TERMUX_EXEC: {"action": "TERMUX_EXEC", "param": "script_name.sh"}
@@ -155,7 +158,7 @@ class AgentEngine(
             
             OUTPUT RULES (RAW JSON ONLY, STRICTLY NO MARKDOWN BACKTICKS):
             {
-              "reply": "Warm, natural Hinglish conversation response",
+              "reply": "Warm, crisp Hinglish conversation response",
               "steps": [
                 {"action": "ACTION_NAME", "param": "", "cx_pct": 0.0, "cy_pct": 0.0, "pkg": "", "op": "", "mode": "", "code_payload": ""}
               ]
@@ -177,7 +180,7 @@ class AgentEngine(
         val service = AgentAccessibilityService.instance
         service?.triggerHeartbeatHaptic()
 
-        // 4. INTELLIGENT SEQUENTIAL EXECUTION LOOP
+        // 4. SEQUENTIAL EXECUTION LOOP
         for (step in parsed.steps) {
             if (step.action == "LAUNCH") {
                 val pkg = getPackageByName(step.param)
@@ -241,6 +244,15 @@ class AgentEngine(
                     shizuku.run("input keyevent 66")
                 }
             }
+            "DOWNLOAD_MEDIA" -> {
+                val isAudio = step.mode.equals("audio", ignoreCase = true)
+                termuxBridge.downloadMedia(step.param, isAudio)
+                service?.showIsland("⬇️ Downloading Media...")
+            }
+            "WEB_SEARCH" -> {
+                termuxBridge.triggerWebSearch(step.param)
+                service?.showIsland("🌐 Searching Web...")
+            }
             "RUN_PYTHON" -> {
                 if (step.codePayload.isNotBlank()) {
                     termuxBridge.runDynamicPython(step.codePayload)
@@ -274,7 +286,6 @@ class AgentEngine(
         }
     }
 
-    // ---------------- LOCAL FAST-PATH ROUTER (5ms Execution, Zero Network Delay) ----------------
     private fun handleLocalOfflineCommands(lower: String): String? {
         val petName = prefs.userPetName
         val service = AgentAccessibilityService.instance
@@ -283,7 +294,7 @@ class AgentEngine(
             return null
         }
 
-        // 1. System Deep Toggles via Shizuku
+        // Shizuku Direct Fast Toggles
         if (lower.contains("data") || lower.contains("internet")) {
             if (lower.contains("on") || lower.contains("chalu")) {
                 shizuku.setMobileData(true)
@@ -339,7 +350,6 @@ class AgentEngine(
             }
         }
 
-        // 2. Hardware Navigation & Media
         if (lower.contains("scroll") || lower.contains("next") || lower.contains("aage badhao") || lower.contains("dusra")) {
             service?.scrollForward()
             return "Next scroll kar diya!"
