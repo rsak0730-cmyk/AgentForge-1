@@ -36,7 +36,6 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
-
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Main + job)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -77,7 +76,8 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
         isServiceAlive = true
         prefs = AppPrefs(this)
         shizuku = ShizukuBridge(this)
-        engine = AgentEngine(this, AiClient(prefs), shizuku)
+        // Fixed: Pass 'this' as Context alongside prefs
+        engine = AgentEngine(this, AiClient(this, prefs), shizuku)
         voiceprintManager = VoiceprintManager(this)
         whitelistHelper = AppWhitelistHelper(this, shizuku)
         tts = TextToSpeech(this, this)
@@ -142,7 +142,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -166,8 +165,8 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             triggerTone(ToneGenerator.TONE_PROP_BEEP)
         }
 
-        updateServiceNotification("🎙️ Listening...")
-        AgentAccessibilityService.instance?.showIsland("🎙️ Listening...")
+        updateServiceNotification("● Listening...")
+        AgentAccessibilityService.instance?.showIsland("● Listening...")
         mainHandler.postDelayed(silenceTimeoutRunnable, 5200)
 
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
@@ -219,7 +218,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-                // Audio clarity and pause resilience tweaks
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1800L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 900L)
@@ -247,6 +245,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             releaseCpuWakeLock()
             return
         }
+
         AgentAccessibilityService.instance?.showIsland("Thinking...")
         scope.launch {
             val reply = engine.execute(spoken)
@@ -269,7 +268,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             }
             override fun onDone(utteranceId: String?) {
                 isSpeaking = false
-                // Echo safe silence buffer before reactivating microphone
                 mainHandler.postDelayed({
                     if (isServiceAlive) {
                         startOnDemandListening(isFollowUp = true)
