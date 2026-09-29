@@ -72,25 +72,26 @@ class AiClient(
     }
 
     suspend fun ask(prompt: String, screenJpegBytes: ByteArray? = null): String = withContext(Dispatchers.IO) {
-        // 1. Try Cloud API if connected
+        // 1. Agar internet aur API Key available hai toh Cloud LLM use hoga
         if (isNetworkAvailable() && prefs.key.isNotBlank()) {
             try {
                 return@withContext executeCloudRequest(prompt, screenJpegBytes)
             } catch (_: Exception) {
-                // Network fail hone par Edge Local fallback
+                // Network failure hone par Edge Local fallback
             }
         }
 
-        // 2. On-Device Edge Fallback
+        // 2. Offline Mode
         return@withContext executeEdgeLocalRequest(prompt)
     }
 
     private fun executeEdgeLocalRequest(prompt: String): String {
-        // Check once more in case storage permission just got granted
+        // Check model status
         if (localLlmInference == null) {
             initLocalEdgeModelIfPresent()
         }
 
+        // Local Edge Model (Gemma) execution
         if (localLlmInference != null) {
             try {
                 val response = localLlmInference?.generateResponse(prompt)
@@ -100,21 +101,44 @@ class AiClient(
             } catch (_: Exception) {}
         }
 
-        // Natural conversational response fallback
-        val clean = prompt.lowercase().trim()
+        // Prompt se original user input nikaalna
+        val userMarker = "USER INPUT: \""
+        val userText = if (prompt.contains(userMarker)) {
+            prompt.substringAfter(userMarker).substringBefore("\"").lowercase().trim()
+        } else {
+            prompt.lowercase().trim()
+        }
+
         val petName = prefs.userPetName
 
-        if (clean.contains("kaisa") || clean.contains("kaise ho") || clean.contains("kemon")) {
-            return """{"reply": "Main badhiya hoon $petName! Aap bataiye aaj phone me kya karein?", "steps": []}"""
-        }
-        if (clean == "ha" || clean == "haan" || clean == "theek") {
-            return """{"reply": "Haan $petName, bolo kya task run karna hai?", "steps": []}"""
-        }
-        if (clean.contains("hey") || clean.contains("hello") || clean.contains("hi")) {
-            return """{"reply": "Hey $petName! Main offline standby par ready hoon.", "steps": []}"""
+        // Direct Action Heuristics (Strictly user command par based)
+        if (userText.contains("youtube")) {
+            val query = userText.replace("open youtube", "").replace("youtube", "").trim()
+            return """{"reply": "YouTube open kar rahi hoon.", "steps": [{"action": "YOUTUBE", "param": "$query"}]}"""
         }
 
-        return """{"reply": "Haan $petName, main sun rahi hoon. Command boliye!", "steps": []}"""
+        if (userText.contains("scroll") || userText.contains("next") || userText.contains("niche")) {
+            return """{"reply": "Next post scroll kar di.", "steps": [{"action": "SWIPE", "param": "UP"}]}"""
+        }
+
+        if (userText.contains("like")) {
+            return """{"reply": "Post like kar di.", "steps": [{"action": "CLICK_NODE", "param": "like"}]}"""
+        }
+
+        if (userText.contains("kaisa") || userText.contains("kaise ho") || userText.contains("kemon")) {
+            return """{"reply": "Main badhiya hoon $petName! Aap bataiye aaj phone me kya karein?", "steps": []}"""
+        }
+
+        if (userText == "hi" || userText == "hey" || userText == "hello") {
+            return """{"reply": "Hey $petName! Boliye, kya command execute karni hai?", "steps": []}"""
+        }
+
+        if (userText == "ha" || userText == "haan" || userText == "theek") {
+            return """{"reply": "Haan $petName, boliye kya madad karun?", "steps": []}"""
+        }
+
+        // Generic intelligent fallback
+        return """{"reply": "Haan $petName, boliye kya command execute karni hai?", "steps": []}"""
     }
 
     private fun executeCloudRequest(prompt: String, screenJpegBytes: ByteArray?): String {
