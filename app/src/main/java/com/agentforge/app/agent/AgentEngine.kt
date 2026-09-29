@@ -85,12 +85,13 @@ class AgentEngine(
             return@withContext msg
         }
 
-        // 3. CAPTURE ACTIVE SCREEN STATE & ELEMENTS
+        // 3. ENHANCED MULTIMODAL & SPATIAL REFERENCE CAPTURE
         val screenElementsJson = AgentAccessibilityService.instance?.scrapeScreenElements() ?: "[]"
         val needsVision = lower.contains("dekh") || lower.contains("screen") ||
                 lower.contains("ye kya") || lower.contains("code") || lower.contains("padho") ||
                 lower.contains("ye") || lower.contains("wo") || lower.contains("color") ||
-                lower.contains("photo") || lower.contains("button") || lower.contains("padh")
+                lower.contains("photo") || lower.contains("button") || lower.contains("iska") ||
+                lower.contains("eta") || lower.contains("ki eta")
 
         val screenBytes: ByteArray? = if (needsVision) {
             ScreenCaptureService.instance?.captureCurrentScreenJpeg()
@@ -107,14 +108,26 @@ class AgentEngine(
             "User: ${it.first}\nAssistant: ${it.second}"
         }
 
+        // 4. ROBUST INTENT UNDERSTANDING PROMPT
         val systemPrompt = """
-            You are "$currentAssistantName", an autonomous Android OS companion and phone co-pilot.
-            You must understand ANY natural conversation, conversational complaints, casual commands, or multi-step requests.
-            Detect hidden actions in casual speech (e.g., "bheed hai shor hai" -> VOLUME UP, "aankhein dukh rahi hain" -> FLASHLIGHT_OFF, "isse hatao" -> SWIPE UP / BACK).
+            You are "$currentAssistantName", an autonomous, empathetic, and sharp Android OS companion.
+            You must carefully distinguish between QUESTIONS, COMPLAINTS, CASUAL TALK, and REAL ACTION COMMANDS.
+            
+            CRITICAL INTENT RULES:
+            1. QUESTION vs ACTION:
+               - If user is asking HOW to do something, explaining a concept, or asking general info (e.g., "kaise karein", "kya hota hai", "how to", "batao"):
+                 DO NOT execute any UI actions. Keep "steps": [] completely empty. Provide a helpful conversational reply.
+            2. COMPLAINT vs COMMAND:
+               - If user is venting/complaining (e.g., "phone kitna slow chal raha hai", "itne notifications kyun aa rahe hain"):
+                 Sympathize with the user first. Do NOT abruptly close apps or trigger random actions unless an explicit request is made.
+            3. RELATIVE PRONOUNS ("iska", "ye", "wo", "eta"):
+               - If referring to an on-screen item, locate the focused or most prominent central element from the on-screen UI tree.
+            4. DIALECT TOLERANCE:
+               - User may speak Hindi, Hinglish, Bengali-mixed phrases ("script ta chalao", "eta koro"). Focus on the intent regardless of grammar.
             
             SCROLL DIRECTION PHYSICS:
-            - To view lower/next content ("niche dikhao", "scroll down", "next reel") -> Execute SWIPE UP (finger drags up).
-            - To view upper/previous content ("upar karo", "scroll up", "previous reel") -> Execute SWIPE DOWN (finger drags down).
+            - To view lower/next content ("niche dikhao", "scroll down", "next reel") -> Execute SWIPE UP.
+            - To view upper/previous content ("upar karo", "scroll up", "previous reel") -> Execute SWIPE DOWN.
             
             ACTIVE ON-SCREEN UI TREE:
             $screenElementsJson
@@ -124,18 +137,17 @@ class AgentEngine(
             - CLICK_AT: {"action": "CLICK_AT", "cx_pct": 0.5, "cy_pct": 0.5} (Normalized coordinates 0.01 - 0.99)
             - SWIPE: {"action": "SWIPE", "param": "UP | DOWN | LEFT | RIGHT"}
             - TYPE_AND_SEND: {"action": "TYPE_AND_SEND", "param": "text to type"}
-            - LAUNCH: {"action": "LAUNCH", "param": "app name e.g. instagram, whatsapp, youtube"}
+            - LAUNCH: {"action": "LAUNCH", "param": "app name"}
             - APP_OPS: {"action": "APP_OPS", "pkg": "package.name", "op": "RECORD_AUDIO | CAMERA | POST_NOTIFICATION", "mode": "allow | ignore"}
             - TERMUX_EXEC: {"action": "TERMUX_EXEC", "param": "script_name.sh"}
             - SAVE_CODE: {"action": "SAVE_CODE", "code_payload": "clean extracted code"}
             - YOUTUBE: {"action": "YOUTUBE", "param": "query"}
             - VOLUME: {"action": "VOLUME", "param": "UP | DOWN | MUTE"}
             - GLOBAL: {"action": "GLOBAL", "param": "HOME | BACK | RECENTS | SCREENSHOT"}
-            - CHAT: No physical action needed.
             
             OUTPUT RULES (RAW JSON ONLY, STRICTLY NO MARKDOWN BACKTICKS):
             {
-              "reply": "Warm, natural Hinglish conversational response",
+              "reply": "Empathetic, crisp natural Hinglish response",
               "steps": [
                 {"action": "ACTION_NAME", "param": "", "cx_pct": 0.0, "cy_pct": 0.0, "pkg": "", "op": "", "mode": "", "code_payload": ""}
               ]
@@ -157,13 +169,12 @@ class AgentEngine(
         val service = AgentAccessibilityService.instance
         service?.triggerHeartbeatHaptic()
 
-        // 4. INTELLIGENT SEQUENTIAL EXECUTION LOOP WITH DYNAMIC APP LOAD AWAIT
+        // 5. SEQUENTIAL STEP EXECUTION WITH SAFE TRANSITION
         for (step in parsed.steps) {
             if (step.action == "LAUNCH") {
                 val pkg = getPackageByName(step.param)
                 if (pkg != null && !isFinancialApp(pkg)) {
                     launchPackage(pkg)
-                    // Wait actively until target app's UI is completely ready
                     waitForAppRender(pkg, maxWaitMs = 4500)
                 }
             } else {
@@ -180,17 +191,13 @@ class AgentEngine(
         parsed.reply
     }
 
-    // Active polling loop: Checks if target app has actually opened & rendered nodes
     private suspend fun waitForAppRender(targetPackage: String, maxWaitMs: Long = 4500) {
         val startTime = System.currentTimeMillis()
         val service = AgentAccessibilityService.instance
 
-        // Minimum grace period for OS transition animation
         delay(350)
-
         while (System.currentTimeMillis() - startTime < maxWaitMs) {
             if (service != null && service.isAppRendered(targetPackage)) {
-                // Buffer to allow complete layout inflate
                 delay(200)
                 return
             }
@@ -260,6 +267,11 @@ class AgentEngine(
     private fun handleLocalOfflineCommands(lower: String): String? {
         val petName = prefs.userPetName
         val service = AgentAccessibilityService.instance
+
+        // Ignore informational questions in offline router
+        if (lower.contains("kaise") || lower.contains("kya hai") || lower.contains("how to") || lower.contains("explain")) {
+            return null
+        }
 
         if (lower.contains("scroll") || lower.contains("next") || lower.contains("aage badhao") || lower.contains("dusra")) {
             service?.scrollForward()
@@ -370,10 +382,14 @@ class AgentEngine(
     private fun fallbackDeducer(rawReply: String, input: String): ParsedPlan {
         val lower = input.lowercase()
         val steps = mutableListOf<ActionStep>()
-        if (lower.contains("scroll") || lower.contains("next")) {
-            steps.add(ActionStep("SWIPE", "UP"))
-        } else if (lower.contains("like")) {
-            steps.add(ActionStep("CLICK_NODE", "like"))
+
+        // Do not force actions on questions
+        if (!lower.contains("kaise") && !lower.contains("kya") && !lower.contains("how") && !lower.contains("explain")) {
+            if (lower.contains("scroll") || lower.contains("next")) {
+                steps.add(ActionStep("SWIPE", "UP"))
+            } else if (lower.contains("like")) {
+                steps.add(ActionStep("CLICK_NODE", "like"))
+            }
         }
         return ParsedPlan(if (rawReply.isNotBlank()) rawReply else "Sun rahi hoon!", steps)
     }
