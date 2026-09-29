@@ -40,14 +40,12 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Main + job)
     private val mainHandler = Handler(Looper.getMainLooper())
-
     private lateinit var prefs: AppPrefs
     private lateinit var shizuku: ShizukuBridge
     private lateinit var engine: AgentEngine
     private lateinit var voiceprintManager: VoiceprintManager
     private lateinit var whitelistHelper: AppWhitelistHelper
     private var wakeLock: PowerManager.WakeLock? = null
-
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var toneGenerator: ToneGenerator? = null
@@ -58,7 +56,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private var isListeningNow = false
     private var isServiceAlive = true
 
-    // 4-Second Silence Timeout Runnable for follow-up mode
     private val silenceTimeoutRunnable = Runnable {
         if (isListeningNow && !isSpeaking) {
             cleanupRecognizer()
@@ -110,7 +107,7 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
     private fun acquireCpuWakeLock() {
         try {
             if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire(15000) // Max 15 seconds wake lock
+                wakeLock?.acquire(15000)
             }
         } catch (_: Exception) {}
     }
@@ -162,35 +159,29 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             tts?.stop()
             isSpeaking = false
         }
-
         cleanupRecognizer()
         mainHandler.removeCallbacks(silenceTimeoutRunnable)
 
         if (!isFollowUp) {
             triggerTone(ToneGenerator.TONE_PROP_BEEP)
         }
-        updateServiceNotification("🎙️ Listening... (Boliye Manish)")
-        AgentAccessibilityService.instance?.showIsland("🎙️ Listening...")
 
-        // Schedule 4-second strict safety timeout
-        mainHandler.postDelayed(silenceTimeoutRunnable, 4500)
+        updateServiceNotification("🎙️ Listening...")
+        AgentAccessibilityService.instance?.showIsland("🎙️ Listening...")
+        mainHandler.postDelayed(silenceTimeoutRunnable, 4800)
 
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
                     isListeningNow = true
                 }
-
                 override fun onBeginningOfSpeech() {
-                    // User started speaking: cancel timeout
                     mainHandler.removeCallbacks(silenceTimeoutRunnable)
                 }
-
                 override fun onRmsChanged(rmsdB: Float) {
                     val bars = ((rmsdB + 2) / 2).toInt().coerceIn(1, 6)
                     AgentAccessibilityService.instance?.showIsland("Listening: ${"|".repeat(bars)}")
                 }
-
                 override fun onBufferReceived(buffer: ByteArray?) {
                     if (buffer != null && prefs.isVoiceprintEnrolled) {
                         val features = voiceprintManager.extractAcousticFeatures(buffer, buffer.size)
@@ -199,11 +190,9 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                         }
                     }
                 }
-
                 override fun onEndOfSpeech() {
                     isListeningNow = false
                 }
-
                 override fun onError(error: Int) {
                     isListeningNow = false
                     cleanupRecognizer()
@@ -211,7 +200,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                     AgentAccessibilityService.instance?.showIsland("Standby")
                     releaseCpuWakeLock()
                 }
-
                 override fun onResults(results: Bundle?) {
                     isListeningNow = false
                     mainHandler.removeCallbacks(silenceTimeoutRunnable)
@@ -219,7 +207,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                     val spoken = matches?.firstOrNull()?.trim() ?: ""
                     handleSpokenCommand(spoken)
                 }
-
                 override fun onPartialResults(partialResults: Bundle?) {}
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
@@ -255,7 +242,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
             releaseCpuWakeLock()
             return
         }
-
         AgentAccessibilityService.instance?.showIsland("Thinking...")
         scope.launch {
             val reply = engine.execute(spoken)
@@ -271,22 +257,20 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
 
     private fun speakResponse(text: String) {
         isSpeaking = true
-
         DialectAdapter.applyRealisticGirlVoice(this, tts, text)
-
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
                 isSpeaking = true
             }
-
             override fun onDone(utteranceId: String?) {
                 isSpeaking = false
-                mainHandler.post {
-                    // HANDS-FREE FOLLOW UP WITH TIMEOUT PROTECTION
-                    startOnDemandListening(isFollowUp = true)
-                }
+                // 450ms Silence Delay to kill acoustic echo before opening mic
+                mainHandler.postDelayed({
+                    if (isServiceAlive) {
+                        startOnDemandListening(isFollowUp = true)
+                    }
+                }, 450)
             }
-
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 isSpeaking = false
@@ -296,7 +280,6 @@ class VoiceListenerService : Service(), TextToSpeech.OnInitListener {
                 }
             }
         })
-
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "MIRA_VOICE_OUT")
     }
 

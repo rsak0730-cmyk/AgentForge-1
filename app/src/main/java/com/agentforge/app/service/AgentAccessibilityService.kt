@@ -64,6 +64,9 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
             private set
         var isFocusModeActive: Boolean = false
             private set
+        @Volatile
+        var currentForegroundPackage: String = ""
+            private set
 
         fun startFocusMode(minutes: Int) {
             focusEndTimeMs = SystemClock.elapsedRealtime() + (minutes * 60 * 1000L)
@@ -176,7 +179,17 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         }
     }
 
-    // ---------------- AUDIO FOCUS MANAGEMENT (NO SELF-ECHO LOOP) ----------------
+    // Dynamic verification to check if target app is rendered on screen
+    fun isAppRendered(expectedPackage: String): Boolean {
+        if (!currentForegroundPackage.contains(expectedPackage, ignoreCase = true)) {
+            val root = rootInActiveWindow ?: return false
+            val rootPkg = root.packageName?.toString() ?: ""
+            if (!rootPkg.contains(expectedPackage, ignoreCase = true)) return false
+        }
+        val root = rootInActiveWindow ?: return false
+        return root.childCount > 0
+    }
+
     private fun requestSpeechFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
@@ -209,7 +222,6 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         }
     }
 
-    // ---------------- OPTIMIZED COMPRESSED UI TREE SCRAPER (MAX 35 KEY NODES) ----------------
     fun scrapeScreenElements(): String {
         val root = rootInActiveWindow ?: return "[]"
         val elementsArray = JSONArray()
@@ -224,7 +236,6 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
             val rect = Rect()
             node.getBoundsInScreen(rect)
 
-            // Ignore off-screen items or zero-size invisibles
             if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= screenW || rect.top >= screenH || rect.width() <= 8 || rect.height() <= 8) {
                 for (i in 0 until node.childCount) traverse(node.getChild(i))
                 return
@@ -272,7 +283,6 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         return point
     }
 
-    // ---------------- ACCURATE PERCENTAGE TOUCH ENGINE ----------------
     fun clickAtPercentage(pctX: Float, pctY: Float): Boolean {
         val realSize = getRealScreenDimensions()
         val targetX = pctX.coerceIn(0.01f, 0.99f) * realSize.x
@@ -317,12 +327,16 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        val currentPkg = event.packageName?.toString() ?: return
+        val pkg = event.packageName?.toString() ?: return
+
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            currentForegroundPackage = pkg
+        }
 
         if (isFocusModeActive) {
             val now = SystemClock.elapsedRealtime()
             if (now < focusEndTimeMs) {
-                if (distractionPackages.any { currentPkg.contains(it) }) {
+                if (distractionPackages.any { pkg.contains(it) }) {
                     performGlobalAction(GLOBAL_ACTION_HOME)
                     val remainingMins = ((focusEndTimeMs - now) / 60000L) + 1
                     showIsland("🛑 Focus Active: $remainingMins min bache!")
@@ -337,7 +351,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
             }
         }
 
-        if (codingPackages.any { currentPkg.contains(it) }) {
+        if (codingPackages.any { pkg.contains(it) }) {
             scanCodeForErrors()
         }
 
@@ -742,7 +756,6 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         }
     }
 
-    // ---------------- ROBUST TEXT ENTRY & DISPATCH ----------------
     fun typeAndSend(text: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val targetNode = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: findFirstEditableNode(root)
