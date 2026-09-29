@@ -5,7 +5,6 @@ import android.content.pm.PackageManager
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.lang.reflect.Method
 
 class ShizukuBridge(private val context: Context) {
 
@@ -13,59 +12,24 @@ class ShizukuBridge(private val context: Context) {
 
     init {
         try {
-            Shizuku.addRequestPermissionResultListener(permissionListener)
+            if (Shizuku.pingBinder()) {
+                Shizuku.addRequestPermissionResultListener(permissionListener)
+            }
         } catch (_: Throwable) {}
     }
 
-    fun hasPermission(): Boolean {
+    fun isReady(): Boolean {
         return try {
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         } catch (_: Throwable) {
             false
         }
     }
 
-    fun requestPermission() {
-        try {
-            if (!hasPermission() && Shizuku.pingBinder()) {
-                Shizuku.requestPermission(1001)
-            }
-        } catch (_: Throwable) {}
-    }
-
-    fun connect(): Boolean {
-        return hasPermission()
-    }
-
-    fun run(action: String): String {
-        val shellCmd = when (action) {
-            "home" -> "input keyevent 3"
-            "back" -> "input keyevent 4"
-            "recent" -> "input keyevent 187"
-            "play_pause" -> "input keyevent 85"
-            else -> action
-        }
-        return executeCommand(shellCmd)
-    }
-
-    fun executeCommand(command: String): String {
-        if (!hasPermission()) return "Shizuku permission not granted"
+    fun runShellCommand(command: String): String {
+        if (!isReady()) return "ERR_SHIZUKU_NOT_READY"
         return try {
-            // Invoking Shizuku newProcess safely across all API revisions
-            val newProcessMethod: Method = Shizuku::class.java.getDeclaredMethod(
-                "newProcess",
-                Array<String>::class.java,
-                Array<String>::class.java,
-                String::class.java
-            )
-            newProcessMethod.isAccessible = true
-            val process = newProcessMethod.invoke(
-                null,
-                arrayOf("sh", "-c", command),
-                null,
-                null
-            ) as Process
-
+            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val output = StringBuilder()
             var line: String?
@@ -74,9 +38,26 @@ class ShizukuBridge(private val context: Context) {
             }
             process.waitFor()
             output.toString().trim()
-        } catch (e: Exception) {
-            "Error: ${e.message}"
+        } catch (e: Throwable) {
+            "ERR_EXECUTION_FAILED: ${e.message}"
         }
+    }
+
+    fun inputTap(x: Float, y: Float): Boolean {
+        val res = runShellCommand("input tap ${x.toInt()} ${y.toInt()}")
+        return !res.startsWith("ERR")
+    }
+
+    fun inputText(text: String): Boolean {
+        val sanitized = text.replace(" ", "%s").replace("'", "\\'")
+        val res = runShellCommand("input text '$sanitized'")
+        return !res.startsWith("ERR")
+    }
+
+    fun setAppOp(packageName: String, opName: String, allow: Boolean): Boolean {
+        val mode = if (allow) "allow" else "ignore"
+        val res = runShellCommand("appops set $packageName $opName $mode")
+        return !res.startsWith("ERR")
     }
 
     fun close() {

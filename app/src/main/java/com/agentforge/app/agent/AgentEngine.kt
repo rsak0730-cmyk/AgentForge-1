@@ -9,6 +9,7 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Environment
 import com.agentforge.app.automation.ShizukuBridge
+import com.agentforge.app.automation.TermuxBridge
 import com.agentforge.app.data.AppPrefs
 import com.agentforge.app.data.MemoryVault
 import com.agentforge.app.network.AgentPeerSync
@@ -29,6 +30,7 @@ class AgentEngine(
 ) {
     private val prefs = AppPrefs(context)
     private val memoryVault = MemoryVault(context)
+    private val termuxBridge = TermuxBridge(context)
     private val chatHistory = mutableListOf<Pair<String, String>>()
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -60,33 +62,30 @@ class AgentEngine(
         val trimmed = userInput.trim()
         val lower = trimmed.lowercase()
 
-        // 1. FAST LOCAL OFFLINE COMMANDS (0ms Hardware Latency)
         val offlineResult = handleLocalOfflineCommands(lower)
         if (offlineResult != null) {
             chatHistory.add(trimmed to offlineResult)
             return@withContext offlineResult
         }
 
-        // 2. FOCUS TIMER DIRECT ROUTING
         if (lower.contains("focus") || lower.contains("pomodoro") || lower.contains("padhai")) {
             val minutes = Regex("\\d+").find(lower)?.value?.toIntOrNull() ?: 25
             AgentAccessibilityService.startFocusMode(minutes)
-            val msg = "Focus mode $minutes minute ke liye shuru kar diya!"
+            val msg = "Focus mode $minutes minute ke liye shuru ho gaya."
             chatHistory.add(trimmed to msg)
             return@withContext msg
         }
 
         if (lower.contains("stop focus") || lower.contains("focus band")) {
             AgentAccessibilityService.stopFocusMode()
-            val msg = "Focus mode band ho gaya."
+            val msg = "Focus mode band kar diya."
             chatHistory.add(trimmed to msg)
             return@withContext msg
         }
 
-        // 3. CAPTURE FILTERED UI HIERARCHY TREE
         val screenElementsJson = AgentAccessibilityService.instance?.scrapeScreenElements() ?: "[]"
         val needsVision = lower.contains("dekh") || lower.contains("screen") ||
-                lower.contains("ye kya hai") || lower.contains("code") || lower.contains("save code")
+                lower.contains("ye kya hai") || lower.contains("code") || lower.contains("padho")
 
         val screenBytes: ByteArray? = if (needsVision) {
             ScreenCaptureService.instance?.captureCurrentScreenJpeg()
@@ -105,111 +104,127 @@ class AgentEngine(
             "User: ${it.first}\nAssistant: ${it.second}"
         }
 
-        // 4. AUTONOMOUS INTENT REASONING WITH STRICT JSON ENFORCEMENT
         val systemPrompt = """
-            You are "$currentAssistantName", a fast, highly capable autonomous Android OS companion.
-            You must map any conversational user query to physical device execution or reply conversationally.
+            You are "$currentAssistantName", an autonomous Android OS companion and phone co-pilot.
+            You must understand ANY natural conversation, conversational complaints, casual commands, or multi-step requests.
+            Detect hidden actions even in casual speech (e.g., "bheed hai shor hai" -> VOLUME UP, "aankhein dukh rahi hain" -> FLASHLIGHT_OFF, "isse hatao" -> SWIPE / BACK).
             
-            ACTIVE ON-SCREEN UI TREE (Top Visible Interactive Nodes):
+            ACTIVE ON-SCREEN UI TREE:
             $screenElementsJson
             
-            AVAILABLE ACTIONS:
-            - CLICK_NODE: {"action": "CLICK_NODE", "param": "matching text or desc"}
-            - CLICK_AT: {"action": "CLICK_AT", "cx_pct": 0.5, "cy_pct": 0.5} (Exact normalized coordinates 0.01 - 0.99)
-            - LONG_PRESS: {"action": "LONG_PRESS", "cx_pct": 0.5, "cy_pct": 0.5}
+            SUPPORTED ACTIONS:
+            - CLICK_NODE: {"action": "CLICK_NODE", "param": "matching text or description"}
+            - CLICK_AT: {"action": "CLICK_AT", "cx_pct": 0.5, "cy_pct": 0.5} (Normalized coordinates 0.01 - 0.99)
             - SWIPE: {"action": "SWIPE", "param": "UP | DOWN | LEFT | RIGHT"}
-            - TYPE_AND_SEND: {"action": "TYPE_AND_SEND", "param": "text to type into active field and submit"}
-            - LAUNCH: {"action": "LAUNCH", "param": "app name e.g. whatsapp, chrome, termux, instagram"}
-            - SAVE_CODE: {"action": "SAVE_CODE", "code_payload": "clean python/js code extracted from screen"}
-            - YOUTUBE: {"action": "YOUTUBE", "param": "song/video search query"}
-            - CHAT: {"action": "CHAT", "reply": "conversational reply"}
+            - TYPE_AND_SEND: {"action": "TYPE_AND_SEND", "param": "text to type"}
+            - LAUNCH: {"action": "LAUNCH", "param": "app name"}
+            - APP_OPS: {"action": "APP_OPS", "pkg": "package.name", "op": "RECORD_AUDIO | CAMERA | POST_NOTIFICATION", "mode": "allow | ignore"}
+            - TERMUX_EXEC: {"action": "TERMUX_EXEC", "param": "script_name.sh"}
+            - SAVE_CODE: {"action": "SAVE_CODE", "code_payload": "clean extracted code"}
+            - YOUTUBE: {"action": "YOUTUBE", "param": "query"}
+            - VOLUME: {"action": "VOLUME", "param": "UP | DOWN | MUTE"}
+            - GLOBAL: {"action": "GLOBAL", "param": "HOME | BACK | RECENTS | SCREENSHOT"}
+            - CHAT: No physical action needed.
             
-            RULE: Output ONLY a single raw valid JSON object. No markdown backticks, no comments.
+            OUTPUT RULES (RAW JSON ONLY, STRICTLY NO MARKDOWN BACKTICKS):
+            {
+              "reply": "Warm, natural Hinglish conversation response addressing user feelings",
+              "steps": [
+                {"action": "ACTION_NAME", "param": "", "cx_pct": 0.0, "cy_pct": 0.0, "pkg": "", "op": "", "mode": "", "code_payload": ""}
+              ]
+            }
             
-            TIME: $currentHour:00 hrs
+            USER INPUT: "$trimmed"
+            CLOCK: $currentHour:00 hrs
             HISTORY:
             $historyContext
-            
-            USER INPUT:
-            "$trimmed"
-            
-            FORMAT:
-            {
-              "action": "CLICK_NODE | CLICK_AT | LONG_PRESS | SWIPE | TYPE_AND_SEND | LAUNCH | SAVE_CODE | YOUTUBE | CHAT",
-              "param": "",
-              "cx_pct": 0.0,
-              "cy_pct": 0.0,
-              "code_payload": "",
-              "reply": "Crisp Hinglish response"
-            }
         """.trimIndent()
 
         val aiRaw = try {
             aiClient.ask(systemPrompt, screenBytes)
         } catch (e: Exception) {
-            return@withContext "Network issue aayi $currentPetName, wapas boliye?"
+            return@withContext "Network issue aayi $currentPetName, wapas boliye na?"
         }
 
         val parsed = parseJsonResponse(aiRaw, trimmed)
         val service = AgentAccessibilityService.instance
         service?.triggerHeartbeatHaptic()
 
-        // 5. STABLE ACTION EXECUTION
-        val finalReply = when (parsed.action) {
+        for (step in parsed.steps) {
+            executeIndividualStep(step, service)
+            if (parsed.steps.size > 1) {
+                delay(350)
+            }
+        }
+
+        chatHistory.add(trimmed to parsed.reply)
+        if (chatHistory.size > 12) chatHistory.removeAt(0)
+
+        parsed.reply
+    }
+
+    private fun executeIndividualStep(step: ActionStep, service: AgentAccessibilityService?) {
+        when (step.action) {
             "CLICK_NODE" -> {
-                val ok = service?.clickAnyElementOnScreen(parsed.param) ?: false
-                if (ok) {
-                    parsed.reply.ifBlank { "Click kar diya." }
-                } else {
-                    service?.clickAtPercentage(parsed.cxPct, parsed.cyPct)
-                    parsed.reply.ifBlank { "${parsed.param} tap kiya." }
+                val ok = service?.clickAnyElementOnScreen(step.param) ?: false
+                if (!ok && (step.cxPct > 0f || step.cyPct > 0f)) {
+                    if (!service!!.clickAtPercentage(step.cxPct, step.cyPct) && shizuku.isReady()) {
+                        val realW = service.resources.displayMetrics.widthPixels
+                        val realH = service.resources.displayMetrics.heightPixels
+                        shizuku.inputTap(step.cxPct * realW, step.cyPct * realH)
+                    }
                 }
             }
             "CLICK_AT" -> {
-                service?.clickAtPercentage(parsed.cxPct, parsed.cyPct)
-                parsed.reply.ifBlank { "Tap kar diya." }
-            }
-            "LONG_PRESS" -> {
-                service?.longPressAtPercentage(parsed.cxPct, parsed.cyPct)
-                parsed.reply.ifBlank { "Long press kiya." }
-            }
-            "SWIPE" -> {
-                service?.swipeDirection(parsed.param)
-                parsed.reply.ifBlank { "Scroll kar diya." }
-            }
-            "TYPE_AND_SEND" -> {
-                val ok = service?.typeAndSend(parsed.param) ?: false
-                if (ok) parsed.reply.ifBlank { "Type karke send kar diya!" } else "Koi chat box nahi mila."
-            }
-            "LAUNCH" -> {
-                val pkg = getPackageByName(parsed.param)
-                if (pkg != null && isFinancialApp(pkg)) {
-                    "Security rules ki wajah se banking apps direct control nahi ki ja sakti."
-                } else if (pkg != null) {
-                    launchPackage(pkg)
-                    // Short delay to let app transition happen cleanly
-                    delay(300)
-                    parsed.reply.ifBlank { "${parsed.param} open kar diya." }
-                } else {
-                    "${parsed.param} app phone me nahi mili."
+                val ok = service?.clickAtPercentage(step.cxPct, step.cyPct) ?: false
+                if (!ok && shizuku.isReady()) {
+                    val realW = service!!.resources.displayMetrics.widthPixels
+                    val realH = service.resources.displayMetrics.heightPixels
+                    shizuku.inputTap(step.cxPct * realW, step.cyPct * realH)
                 }
             }
+            "SWIPE" -> service?.swipeDirection(step.param)
+            "TYPE_AND_SEND" -> {
+                val ok = service?.typeAndSend(step.param) ?: false
+                if (!ok && shizuku.isReady()) {
+                    shizuku.inputText(step.param)
+                }
+            }
+            "LAUNCH" -> {
+                val pkg = getPackageByName(step.param)
+                if (pkg != null && !isFinancialApp(pkg)) {
+                    launchPackage(pkg)
+                }
+            }
+            "APP_OPS" -> {
+                if (shizuku.isReady() && step.pkg.isNotBlank() && step.op.isNotBlank()) {
+                    shizuku.setAppOp(step.pkg, step.op, step.mode.equals("allow", true))
+                }
+            }
+            "TERMUX_EXEC" -> {
+                termuxBridge.executeScript(step.param)
+            }
             "SAVE_CODE" -> {
-                val code = parsed.codePayload.ifBlank { "print('No code extracted')" }
+                val code = step.codePayload.ifBlank { "print('Extracted')" }
                 saveCodeToFile(code, "script_${System.currentTimeMillis() % 1000}.py")
-                "Screen se code extract karke /sdcard/MiraScripts me save kar diya hai."
             }
-            "YOUTUBE" -> {
-                openYouTubeSearch(parsed.param.ifBlank { "coding lo-fi" })
-                parsed.reply.ifBlank { "YouTube par chala diya." }
+            "YOUTUBE" -> openYouTubeSearch(step.param.ifBlank { "lo-fi" })
+            "VOLUME" -> {
+                when (step.param.uppercase()) {
+                    "UP" -> audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+                    "DOWN" -> audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+                    "MUTE" -> audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+                }
             }
-            else -> parsed.reply
+            "GLOBAL" -> {
+                when (step.param.uppercase()) {
+                    "HOME" -> service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+                    "BACK" -> service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    "RECENTS" -> service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
+                    "SCREENSHOT" -> service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+                }
+            }
         }
-
-        chatHistory.add(trimmed to finalReply)
-        if (chatHistory.size > 12) chatHistory.removeAt(0)
-
-        finalReply
     }
 
     private fun handleLocalOfflineCommands(lower: String): String? {
@@ -228,7 +243,6 @@ class AgentEngine(
             service?.likeCurrentContent()
             return "Like kar diya!"
         }
-
         if (lower.contains("forward") || lower.contains("aage karo")) {
             service?.forwardVideo()
             return "10 second forward kar diya."
@@ -237,7 +251,6 @@ class AgentEngine(
             service?.rewindVideo()
             return "10 second rewind kar diya."
         }
-
         if (lower.contains("torch") || lower.contains("flashlight")) {
             return if (lower.contains("on") || lower.contains("jalao")) {
                 toggleFlashlight(true)
@@ -249,38 +262,6 @@ class AgentEngine(
                 toggleFlashlight(!isTorchOn)
                 if (isTorchOn) "Torch on ho gayi." else "Torch band kar di."
             }
-        }
-
-        if (lower.contains("volume") || lower.contains("aawaz")) {
-            if (lower.contains("up") || lower.contains("badhao") || lower.contains("tez")) {
-                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
-                return "Volume badha diya."
-            }
-            if (lower.contains("down") || lower.contains("kam") || lower.contains("slow")) {
-                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
-                return "Volume kam kar diya."
-            }
-            if (lower.contains("mute") || lower.contains("chup")) {
-                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
-                return "Mute kar diya."
-            }
-        }
-
-        if (lower == "home" || lower == "home screen" || lower == "bahar aao") {
-            service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
-            return "Home screen par aa gaye."
-        }
-        if (lower == "back" || lower == "piche jao" || lower == "wapas") {
-            service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-            return "Back kar diya."
-        }
-        if (lower == "recent" || lower == "recent apps") {
-            service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
-            return "Recent apps open kar di."
-        }
-        if (lower.contains("screenshot")) {
-            service?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
-            return "Screenshot capture kar liya."
         }
 
         return null
@@ -303,30 +284,51 @@ class AgentEngine(
         } catch (_: Exception) {}
     }
 
-    private data class ParsedAction(
+    private data class ActionStep(
         val action: String,
-        val param: String,
-        val cxPct: Float,
-        val cyPct: Float,
-        val codePayload: String,
-        val reply: String
+        val param: String = "",
+        val cxPct: Float = 0f,
+        val cyPct: Float = 0f,
+        val pkg: String = "",
+        val op: String = "",
+        val mode: String = "",
+        val codePayload: String = ""
     )
 
-    private fun parseJsonResponse(raw: String, originalInput: String): ParsedAction {
+    private data class ParsedPlan(
+        val reply: String,
+        val steps: List<ActionStep>
+    )
+
+    private fun parseJsonResponse(raw: String, originalInput: String): ParsedPlan {
         return try {
             val jsonStart = raw.indexOf("{")
             val jsonEnd = raw.lastIndexOf("}")
             if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart) {
                 val jsonStr = raw.substring(jsonStart, jsonEnd + 1)
                 val obj = JSONObject(jsonStr)
-                ParsedAction(
-                    action = obj.optString("action", "CHAT").uppercase(),
-                    param = obj.optString("param", ""),
-                    cxPct = obj.optDouble("cx_pct", 0.5).toFloat(),
-                    cyPct = obj.optDouble("cy_pct", 0.5).toFloat(),
-                    codePayload = obj.optString("code_payload", ""),
-                    reply = obj.optString("reply", "Haan boliye!")
-                )
+                val reply = obj.optString("reply", "Haan boliye!")
+                val stepsList = mutableListOf<ActionStep>()
+
+                val stepsArray = obj.optJSONArray("steps")
+                if (stepsArray != null) {
+                    for (i in 0 until stepsArray.length()) {
+                        val s = stepsArray.getJSONObject(i)
+                        stepsList.add(
+                            ActionStep(
+                                action = s.optString("action", "CHAT").uppercase(),
+                                param = s.optString("param", ""),
+                                cxPct = s.optDouble("cx_pct", 0.0).toFloat(),
+                                cyPct = s.optDouble("cy_pct", 0.0).toFloat(),
+                                pkg = s.optString("pkg", ""),
+                                op = s.optString("op", ""),
+                                mode = s.optString("mode", ""),
+                                codePayload = s.optString("code_payload", "")
+                            )
+                        )
+                    }
+                }
+                ParsedPlan(reply, stepsList)
             } else {
                 fallbackDeducer(raw, originalInput)
             }
@@ -335,13 +337,15 @@ class AgentEngine(
         }
     }
 
-    private fun fallbackDeducer(rawReply: String, input: String): ParsedAction {
+    private fun fallbackDeducer(rawReply: String, input: String): ParsedPlan {
         val lower = input.lowercase()
-        return when {
-            lower.contains("scroll") || lower.contains("next") -> ParsedAction("SWIPE", "UP", 0.5f, 0.5f, "", "Next scroll kar diya!")
-            lower.contains("like") -> ParsedAction("CLICK_NODE", "like", 0.5f, 0.5f, "", "Like kar diya!")
-            else -> ParsedAction("CHAT", "", 0.5f, 0.5f, "", if (rawReply.isNotBlank()) rawReply else "Sun rahi hoon!")
+        val steps = mutableListOf<ActionStep>()
+        if (lower.contains("scroll") || lower.contains("next")) {
+            steps.add(ActionStep("SWIPE", "UP"))
+        } else if (lower.contains("like")) {
+            steps.add(ActionStep("CLICK_NODE", "like"))
         }
+        return ParsedPlan(if (rawReply.isNotBlank()) rawReply else "Sun rahi hoon!", steps)
     }
 
     private fun isFinancialApp(pkg: String): Boolean {
