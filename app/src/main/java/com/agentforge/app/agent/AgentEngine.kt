@@ -69,7 +69,7 @@ class AgentEngine(
             return@withContext offlineResult
         }
 
-        // 2. FOCUS TIMER DIRECT ROUTER
+        // 2. FOCUS TIMER
         if (lower.contains("focus") || lower.contains("pomodoro") || lower.contains("padhai")) {
             val minutes = Regex("\\d+").find(lower)?.value?.toIntOrNull() ?: 25
             AgentAccessibilityService.startFocusMode(minutes)
@@ -85,8 +85,10 @@ class AgentEngine(
             return@withContext msg
         }
 
-        // 3. ENHANCED MULTIMODAL & SPATIAL REFERENCE CAPTURE
+        // 3. CAPTURE ACTIVE SCREEN & TEMPORAL MEMORY LOGGING
         val screenElementsJson = AgentAccessibilityService.instance?.scrapeScreenElements() ?: "[]"
+        memoryVault.cacheScreenText(screenElementsJson)
+
         val needsVision = lower.contains("dekh") || lower.contains("screen") ||
                 lower.contains("ye kya") || lower.contains("code") || lower.contains("padho") ||
                 lower.contains("ye") || lower.contains("wo") || lower.contains("color") ||
@@ -103,51 +105,53 @@ class AgentEngine(
         val currentPetName = prefs.userPetName
         val cal = Calendar.getInstance()
         val currentHour = cal.get(Calendar.HOUR_OF_DAY)
+        val recentScreenContext = if (lower.contains("pehle") || lower.contains("kya tha") || lower.contains("dekha tha")) {
+            memoryVault.getRecentScreenMemory()
+        } else {
+            ""
+        }
 
         val historyContext = chatHistory.takeLast(6).joinToString("\n") {
             "User: ${it.first}\nAssistant: ${it.second}"
         }
 
-        // 4. ROBUST INTENT UNDERSTANDING PROMPT
         val systemPrompt = """
-            You are "$currentAssistantName", an autonomous, empathetic, and sharp Android OS companion.
-            You must carefully distinguish between QUESTIONS, COMPLAINTS, CASUAL TALK, and REAL ACTION COMMANDS.
+            You are "$currentAssistantName", an autonomous, next-gen Android OS companion and phone co-pilot.
+            You must understand normal conversations, questions, casual commands, and execute complex multi-step workflows.
             
-            CRITICAL INTENT RULES:
+            RULES & INTELLIGENCE:
             1. QUESTION vs ACTION:
-               - If user is asking HOW to do something, explaining a concept, or asking general info (e.g., "kaise karein", "kya hota hai", "how to", "batao"):
-                 DO NOT execute any UI actions. Keep "steps": [] completely empty. Provide a helpful conversational reply.
-            2. COMPLAINT vs COMMAND:
-               - If user is venting/complaining (e.g., "phone kitna slow chal raha hai", "itne notifications kyun aa rahe hain"):
-                 Sympathize with the user first. Do NOT abruptly close apps or trigger random actions unless an explicit request is made.
-            3. RELATIVE PRONOUNS ("iska", "ye", "wo", "eta"):
-               - If referring to an on-screen item, locate the focused or most prominent central element from the on-screen UI tree.
-            4. DIALECT TOLERANCE:
-               - User may speak Hindi, Hinglish, Bengali-mixed phrases ("script ta chalao", "eta koro"). Focus on the intent regardless of grammar.
-            
-            SCROLL DIRECTION PHYSICS:
-            - To view lower/next content ("niche dikhao", "scroll down", "next reel") -> Execute SWIPE UP.
-            - To view upper/previous content ("upar karo", "scroll up", "previous reel") -> Execute SWIPE DOWN.
+               - If user is merely asking a question or explanation ("kaise karein", "explain karo"), DO NOT output UI actions. Keep "steps": [] empty.
+            2. TEMPORAL SCREEN RECALL:
+               - Recent Past Screen Activity:
+               $recentScreenContext
+            3. ZERO-SHOT GHOST TAP:
+               - If an interactive element on screen has no text label (like icons, heart buttons, image canvas), return its approximate normalized coordinates:
+                 {"action": "GHOST_TAP", "cx_pct": 0.5, "cy_pct": 0.5}
+            4. SELF-HEALING PYTHON CODE RUNNER:
+               - If user needs complex computation, local file tasks, or data extraction, write clean Python code in:
+                 {"action": "RUN_PYTHON", "code_payload": "import os\n..."}
             
             ACTIVE ON-SCREEN UI TREE:
             $screenElementsJson
             
             SUPPORTED ACTIONS:
-            - CLICK_NODE: {"action": "CLICK_NODE", "param": "matching text or description"}
-            - CLICK_AT: {"action": "CLICK_AT", "cx_pct": 0.5, "cy_pct": 0.5} (Normalized coordinates 0.01 - 0.99)
+            - CLICK_NODE: {"action": "CLICK_NODE", "param": "matching text"}
+            - CLICK_AT: {"action": "CLICK_AT", "cx_pct": 0.5, "cy_pct": 0.5}
+            - GHOST_TAP: {"action": "GHOST_TAP", "cx_pct": 0.5, "cy_pct": 0.5}
             - SWIPE: {"action": "SWIPE", "param": "UP | DOWN | LEFT | RIGHT"}
             - TYPE_AND_SEND: {"action": "TYPE_AND_SEND", "param": "text to type"}
             - LAUNCH: {"action": "LAUNCH", "param": "app name"}
+            - RUN_PYTHON: {"action": "RUN_PYTHON", "code_payload": "clean python script"}
             - APP_OPS: {"action": "APP_OPS", "pkg": "package.name", "op": "RECORD_AUDIO | CAMERA | POST_NOTIFICATION", "mode": "allow | ignore"}
             - TERMUX_EXEC: {"action": "TERMUX_EXEC", "param": "script_name.sh"}
-            - SAVE_CODE: {"action": "SAVE_CODE", "code_payload": "clean extracted code"}
             - YOUTUBE: {"action": "YOUTUBE", "param": "query"}
             - VOLUME: {"action": "VOLUME", "param": "UP | DOWN | MUTE"}
             - GLOBAL: {"action": "GLOBAL", "param": "HOME | BACK | RECENTS | SCREENSHOT"}
             
             OUTPUT RULES (RAW JSON ONLY, STRICTLY NO MARKDOWN BACKTICKS):
             {
-              "reply": "Empathetic, crisp natural Hinglish response",
+              "reply": "Warm, natural Hinglish conversation response",
               "steps": [
                 {"action": "ACTION_NAME", "param": "", "cx_pct": 0.0, "cy_pct": 0.0, "pkg": "", "op": "", "mode": "", "code_payload": ""}
               ]
@@ -169,7 +173,7 @@ class AgentEngine(
         val service = AgentAccessibilityService.instance
         service?.triggerHeartbeatHaptic()
 
-        // 5. SEQUENTIAL STEP EXECUTION WITH SAFE TRANSITION
+        // 4. SEQUENTIAL EXECUTION LOOP
         for (step in parsed.steps) {
             if (step.action == "LAUNCH") {
                 val pkg = getPackageByName(step.param)
@@ -217,7 +221,7 @@ class AgentEngine(
                     }
                 }
             }
-            "CLICK_AT" -> {
+            "CLICK_AT", "GHOST_TAP" -> {
                 val ok = service?.clickAtPercentage(step.cxPct, step.cyPct) ?: false
                 if (!ok && shizuku.isReady() && service != null) {
                     val realW = service.resources.displayMetrics.widthPixels
@@ -233,6 +237,12 @@ class AgentEngine(
                     shizuku.run("input keyevent 66")
                 }
             }
+            "RUN_PYTHON" -> {
+                if (step.codePayload.isNotBlank()) {
+                    termuxBridge.runDynamicPython(step.codePayload)
+                    service?.showIsland("🐍 Script Running...")
+                }
+            }
             "APP_OPS" -> {
                 if (shizuku.isReady() && step.pkg.isNotBlank() && step.op.isNotBlank()) {
                     shizuku.setAppOp(step.pkg, step.op, step.mode.equals("allow", true))
@@ -240,10 +250,6 @@ class AgentEngine(
             }
             "TERMUX_EXEC" -> {
                 termuxBridge.executeScript(step.param)
-            }
-            "SAVE_CODE" -> {
-                val code = step.codePayload.ifBlank { "print('Extracted')" }
-                saveCodeToFile(code, "script_${System.currentTimeMillis() % 1000}.py")
             }
             "YOUTUBE" -> openYouTubeSearch(step.param.ifBlank { "lo-fi" })
             "VOLUME" -> {
@@ -268,7 +274,6 @@ class AgentEngine(
         val petName = prefs.userPetName
         val service = AgentAccessibilityService.instance
 
-        // Ignore informational questions in offline router
         if (lower.contains("kaise") || lower.contains("kya hai") || lower.contains("how to") || lower.contains("explain")) {
             return null
         }
@@ -314,15 +319,6 @@ class AgentEngine(
             val id = cameraManager.cameraIdList.firstOrNull() ?: return
             cameraManager.setTorchMode(id, status)
             isTorchOn = status
-        } catch (_: Exception) {}
-    }
-
-    private fun saveCodeToFile(code: String, filename: String) {
-        try {
-            val dir = File(Environment.getExternalStorageDirectory(), "MiraScripts")
-            if (!dir.exists()) dir.mkdirs()
-            val file = File(dir, filename)
-            file.writeText(code)
         } catch (_: Exception) {}
     }
 
@@ -382,8 +378,6 @@ class AgentEngine(
     private fun fallbackDeducer(rawReply: String, input: String): ParsedPlan {
         val lower = input.lowercase()
         val steps = mutableListOf<ActionStep>()
-
-        // Do not force actions on questions
         if (!lower.contains("kaise") && !lower.contains("kya") && !lower.contains("how") && !lower.contains("explain")) {
             if (lower.contains("scroll") || lower.contains("next")) {
                 steps.add(ActionStep("SWIPE", "UP"))

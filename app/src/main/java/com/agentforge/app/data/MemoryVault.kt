@@ -7,6 +7,7 @@ import java.io.File
 
 class MemoryVault(context: Context) {
     private val memoryFile = File(context.filesDir, "mira_memory.json")
+    private val screenMemoryFile = File(context.filesDir, "mira_screen_cache.json")
 
     init {
         if (!memoryFile.exists()) {
@@ -45,12 +46,40 @@ class MemoryVault(context: Context) {
         } catch (_: Exception) {}
     }
 
-    fun incrementInteraction() {
+    // Passive temporal screen memory caching
+    fun cacheScreenText(screenTextDump: String) {
+        if (screenTextDump.isBlank()) return
         try {
-            val obj = JSONObject(memoryFile.readText())
-            val count = obj.optInt("interaction_count", 0) + 1
-            obj.put("interaction_count", count)
-            memoryFile.writeText(obj.toString())
+            val list = if (screenMemoryFile.exists()) {
+                JSONArray(screenMemoryFile.readText())
+            } else {
+                JSONArray()
+            }
+            val entry = JSONObject().apply {
+                put("time", System.currentTimeMillis())
+                put("text", screenTextDump.take(500))
+            }
+            list.put(entry)
+            // Keep last 15 screen memories only to save memory
+            while (list.length() > 15) {
+                list.remove(0)
+            }
+            screenMemoryFile.writeText(list.toString())
         } catch (_: Exception) {}
+    }
+
+    fun getRecentScreenMemory(): String {
+        return try {
+            if (!screenMemoryFile.exists()) return "No recent screen activity recorded."
+            val array = JSONArray(screenMemoryFile.readText())
+            val sb = StringBuilder()
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+                sb.append("• ").append(item.optString("text")).append("\n")
+            }
+            sb.toString()
+        } catch (_: Exception) {
+            "No screen activity logged."
+        }
     }
 }
