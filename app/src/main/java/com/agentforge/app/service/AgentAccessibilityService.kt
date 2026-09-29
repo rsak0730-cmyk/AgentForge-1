@@ -41,10 +41,11 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.agentforge.app.MainActivity
-import com.agentforge.app.agent.DialectAdapter
 import com.agentforge.app.automation.PredictiveActionEngine
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 import kotlin.math.sqrt
 
@@ -64,14 +65,14 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
             focusEndTimeMs = SystemClock.elapsedRealtime() + (minutes * 60 * 1000L)
             isFocusModeActive = true
             instance?.showIsland("🎯 Focus: ${minutes}m Active")
-            instance?.speakDirectly("Focus mode shuru. Abhi agle $minutes minute padhai par dhyan do!")
+            instance?.speakDirectly("Focus mode shuru. Agle $minutes minute kaam par focus rakhein!")
         }
 
         fun stopFocusMode() {
             isFocusModeActive = false
             focusEndTimeMs = 0L
             instance?.showIsland("Focus Ended")
-            instance?.speakDirectly("Focus mode band kar diya.")
+            instance?.speakDirectly("Focus mode band kar diya hai.")
         }
     }
 
@@ -158,14 +159,96 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
 
         val prefs = AppPrefs(this)
         if (prefs.isIslandEnabled) {
-            showIsland("${prefs.name} Co-Pilot Ready")
+            showIsland("${prefs.name} Online")
         }
     }
 
     fun speakDirectly(text: String) {
         Handler(Looper.getMainLooper()).post {
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "AGENT_UTTERANCE")
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "AGENT_SPEECH")
         }
+    }
+
+    // ---------------- DYNAMIC SCREEN HIERARCHY TREE SCRAPER ----------------
+    fun scrapeScreenElements(): String {
+        val root = rootInActiveWindow ?: return "[]"
+        val elementsArray = JSONArray()
+        val metrics = resources.displayMetrics
+        val screenW = metrics.widthPixels.toFloat()
+        val screenH = metrics.heightPixels.toFloat()
+
+        fun traverse(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+
+            val text = node.text?.toString()?.trim() ?: ""
+            val desc = node.contentDescription?.toString()?.trim() ?: ""
+            val isClickable = node.isClickable
+            val isEditable = node.isEditable
+
+            if ((text.isNotEmpty() || desc.isNotEmpty() || isClickable || isEditable) && rect.width() > 0 && rect.height() > 0) {
+                val item = JSONObject().apply {
+                    if (text.isNotEmpty()) put("text", text)
+                    if (desc.isNotEmpty()) put("desc", desc)
+                    put("clickable", isClickable)
+                    put("editable", isEditable)
+                    put("cx_pct", (rect.centerX() / screenW).coerceIn(0f, 1f))
+                    put("cy_pct", (rect.centerY() / screenH).coerceIn(0f, 1f))
+                }
+                elementsArray.put(item)
+            }
+
+            for (i in 0 until node.childCount) {
+                traverse(node.getChild(i))
+            }
+        }
+
+        traverse(root)
+        return elementsArray.toString()
+    }
+
+    // ---------------- PERCENTAGE-BASED PRECISE TOUCH EXECUTION ----------------
+    fun clickAtPercentage(pctX: Float, pctY: Float): Boolean {
+        val metrics = resources.displayMetrics
+        val realX = pctX.coerceIn(0.01f, 0.99f) * metrics.widthPixels
+        val realY = pctY.coerceIn(0.01f, 0.99f) * metrics.heightPixels
+        return clickCoordinates(realX, realY)
+    }
+
+    fun longPressAtPercentage(pctX: Float, pctY: Float): Boolean {
+        val metrics = resources.displayMetrics
+        val realX = pctX.coerceIn(0.01f, 0.99f) * metrics.widthPixels
+        val realY = pctY.coerceIn(0.01f, 0.99f) * metrics.heightPixels
+
+        val path = Path().apply { moveTo(realX, realY) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 750)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        return dispatchGesture(gesture, null, null)
+    }
+
+    fun swipeDirection(direction: String): Boolean {
+        val metrics = resources.displayMetrics
+        val w = metrics.widthPixels.toFloat()
+        val h = metrics.heightPixels.toFloat()
+
+        return when (direction.uppercase()) {
+            "UP" -> swipeGesture(w / 2f, h * 0.82f, w / 2f, h * 0.18f, 220)
+            "DOWN" -> swipeGesture(w / 2f, h * 0.18f, w / 2f, h * 0.82f, 220)
+            "LEFT" -> swipeGesture(w * 0.85f, h / 2f, w * 0.15f, h / 2f, 220)
+            "RIGHT" -> swipeGesture(w * 0.15f, h / 2f, w * 0.85f, h / 2f, 220)
+            else -> swipeGesture(w / 2f, h * 0.82f, w / 2f, h * 0.18f, 220)
+        }
+    }
+
+    private fun swipeGesture(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long): Boolean {
+        val path = Path().apply {
+            moveTo(startX, startY)
+            lineTo(endX, endY)
+        }
+        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        return dispatchGesture(gesture, null, null)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -179,14 +262,14 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
                     performGlobalAction(GLOBAL_ACTION_HOME)
                     val remainingMins = ((focusEndTimeMs - now) / 60000L) + 1
                     showIsland("🛑 Focus Active: $remainingMins min bache!")
-                    speakDirectly("Focus mode chal raha hai! Abhi distracting apps band rakho.")
+                    speakDirectly("Focus mode active hai! Distracting apps band rakhein.")
                     triggerHeartbeatHaptic()
                     return
                 }
             } else {
                 isFocusModeActive = false
                 showIsland("🎉 Focus Completed!")
-                speakDirectly("Focus session pura ho gaya!")
+                speakDirectly("Focus session complete!")
             }
         }
 
@@ -209,10 +292,10 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         val text = buffer.toString()
 
         val matchedError = when {
-            text.contains("SyntaxError") -> "SyntaxError mila hai. Colon ya brackets check karo."
-            text.contains("IndentationError") -> "IndentationError aaya hai. Spaces match karo."
-            text.contains("NameError") -> "NameError hai. Variable name check karo."
-            text.contains("TypeError") -> "TypeError detect hua hai."
+            text.contains("SyntaxError") -> "SyntaxError detect hua. Quotes ya brackets check karein."
+            text.contains("IndentationError") -> "IndentationError aaya hai. Spaces align karein."
+            text.contains("NameError") -> "NameError hai. Variable define nahi hai."
+            text.contains("TypeError") -> "TypeError mila hai."
             else -> null
         }
 
@@ -284,12 +367,12 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
             if (nearEar) {
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                 audioManager.isSpeakerphoneOn = false
-                showIsland("🤫 Earpiece Whisper Active")
+                showIsland("🤫 Earpiece Connected")
                 triggerHeartbeatHaptic()
             } else {
                 audioManager.mode = AudioManager.MODE_NORMAL
                 audioManager.isSpeakerphoneOn = true
-                showIsland("🔊 Speaker Restored")
+                showIsland("🔊 Speaker Active")
             }
         } catch (_: Exception) {}
     }
@@ -477,7 +560,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
                                 action = VoiceListenerService.ACTION_START_LISTENING
                             }
                             startService(intent)
-                            showIsland("🎙️ Mic Opened")
+                            showIsland("🎙️ Mic Active")
                             return true
                         }
 
@@ -595,7 +678,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         }
     }
 
-    // ---------------- ROBUST TEXT ENTRY & SUBMISSION ----------------
+    // ---------------- TEXT ENTRY & SEND (MULTI-TARGET RESOLUTION) ----------------
     fun typeAndSend(text: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val targetNode = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: findFirstEditableNode(root)
@@ -607,9 +690,8 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
 
             if (textSuccess) {
                 Handler(Looper.getMainLooper()).postDelayed({
-                    val clicked = clickByTextOrDescription(listOf("send", "bhejo", "submit", "post", "done"))
+                    val clicked = clickByTextOrDescription(listOf("send", "bhejo", "submit", "post", "enter", "done"))
                     if (!clicked) {
-                        // Fallback click on typical keyboard send button bottom-right coordinate
                         val metrics = resources.displayMetrics
                         clickCoordinates(metrics.widthPixels * 0.90f, metrics.heightPixels * 0.95f)
                     }
@@ -630,7 +712,6 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         return null
     }
 
-    // ---------------- REELS / VIDEO CONTROLS WITH COORDINATE FALLBACK ----------------
     fun forwardVideo(): Boolean {
         val root = rootInActiveWindow
         if (root != null && clickByTextOrDescription(listOf("fast forward", "forward 10 seconds", "seek forward"))) {
@@ -665,11 +746,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         return if (scrollable != null && scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
             true
         } else {
-            val metrics = resources.displayMetrics
-            val cx = metrics.widthPixels / 2f
-            val startY = metrics.heightPixels * 0.80f
-            val endY = metrics.heightPixels * 0.20f
-            swipeGesture(cx, startY, cx, endY)
+            swipeDirection("UP")
         }
     }
 
@@ -679,11 +756,7 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         return if (scrollable != null && scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
             true
         } else {
-            val metrics = resources.displayMetrics
-            val cx = metrics.widthPixels / 2f
-            val startY = metrics.heightPixels * 0.20f
-            val endY = metrics.heightPixels * 0.80f
-            swipeGesture(cx, startY, cx, endY)
+            swipeDirection("DOWN")
         }
     }
 
@@ -691,21 +764,10 @@ class AgentAccessibilityService : AccessibilityService(), SensorEventListener {
         val clicked = clickByTextOrDescription(listOf("like", "heart", "pasand", "thumbs up"))
         if (clicked) return true
 
-        // Double-tap center screen for Instagram/YouTube short like fallback
         val metrics = resources.displayMetrics
         val cx = metrics.widthPixels / 2f
         val cy = metrics.heightPixels / 2f
         return doubleTapCoordinates(cx, cy)
-    }
-
-    private fun swipeGesture(startX: Float, startY: Float, endX: Float, endY: Float): Boolean {
-        val path = Path().apply {
-            moveTo(startX, startY)
-            lineTo(endX, endY)
-        }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 220)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        return dispatchGesture(gesture, null, null)
     }
 
     private fun findScrollableNode(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
