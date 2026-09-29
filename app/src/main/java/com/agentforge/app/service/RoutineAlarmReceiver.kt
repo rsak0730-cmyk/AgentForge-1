@@ -16,8 +16,7 @@ class RoutineAlarmReceiver : BroadcastReceiver() {
         val routineTask = intent.getStringExtra("ROUTINE_TASK") ?: return
         val prefs = AppPrefs(context)
         val shizuku = ShizukuBridge(context)
-        val engine = AgentEngine(context, AiClient(prefs), shizuku)
-
+        val engine = AgentEngine(context, AiClient(context, prefs), shizuku)
         AgentAccessibilityService.instance?.showIsland("Cron: $routineTask")
         CoroutineScope(Dispatchers.Main).launch {
             engine.execute(routineTask)

@@ -115,7 +115,7 @@ class MainActivity : ComponentActivity() {
         vault = SecurityVault(this)
         prefs = AppPrefs(this)
         shizuku = ShizukuBridge(this)
-        engine = AgentEngine(this, AiClient(prefs), shizuku)
+        engine = AgentEngine(this, AiClient(this, prefs), shizuku)
 
         AppWhitelistHelper(this, shizuku).ensureBackgroundSurvival()
         requestNeededPermissions()
@@ -228,7 +228,6 @@ fun AgentForgeApp(
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var isAppUnlocked by remember { mutableStateOf(!prefs.isFaceLockEnabled || !prefs.isFaceEnrolled) }
 
-    // Persistent messages across tab navigation and recreation
     val persistentMessages = rememberSaveable(
         saver = listSaver(
             save = { it.toList() },
@@ -389,7 +388,7 @@ private fun ChatPage(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val activeEngine = remember(prefs.key, prefs.model) {
-        engine ?: AgentEngine(context, AiClient(prefs), shizuku)
+        engine ?: AgentEngine(context, AiClient(context, prefs), shizuku)
     }
 
     LaunchedEffect(prefs.name) {
@@ -600,7 +599,7 @@ private fun ApiPage(prefs: AppPrefs) {
                         prefs.key = key.trim()
                         prefs.model = model.trim()
                         prefs.baseUrl = base.trim()
-                        val client = AiClient(prefs)
+                        val client = AiClient(context, prefs)
                         val res = withContext(Dispatchers.IO) { client.ask("Respond with ONLY one word: Connected") }
                         testResult = res
                         isTesting = false

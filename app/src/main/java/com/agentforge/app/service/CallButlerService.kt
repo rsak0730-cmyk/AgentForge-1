@@ -39,7 +39,7 @@ class CallButlerService : Service(), TextToSpeech.OnInitListener {
     override fun onCreate() {
         super.onCreate()
         prefs = AppPrefs(this)
-        ai = AiClient(prefs)
+        ai = AiClient(this, prefs)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         setupSilentAudioUplink()
         tts = TextToSpeech(this, this)
@@ -101,6 +101,7 @@ class CallButlerService : Service(), TextToSpeech.OnInitListener {
         val initialGreeting = "Namaste. Manish abhi available nahi hain. Aap kaun bol rahe hain aur kya kaam hai?"
         speakDirectToCallUplink(initialGreeting, Locale("hi", "IN"))
         delay(4000)
+
         val callerSimulatedText = "Ami bolchi dada, dorkari kotha chilo"
         val prompt = """
             Caller words: "$callerSimulatedText"
@@ -109,6 +110,7 @@ class CallButlerService : Service(), TextToSpeech.OnInitListener {
             State that Manish will review the transcript on his screen.
             Output STRICT JSON: {"detected_lang": "bn"|"hi"|"en", "reply_text": "...", "is_spam": false}
         """.trimIndent()
+
         val raw = ai.ask(prompt)
         val clean = raw.replace("```json", "").replace("```", "").trim()
         try {
