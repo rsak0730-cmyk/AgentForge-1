@@ -41,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +68,7 @@ import androidx.core.content.ContextCompat
 import com.agentforge.app.agent.AgentEngine
 import com.agentforge.app.agent.AiClient
 import com.agentforge.app.agent.DialectAdapter
+import com.agentforge.app.automation.AppWhitelistHelper
 import com.agentforge.app.automation.ShizukuBridge
 import com.agentforge.app.data.AppPrefs
 import com.agentforge.app.security.RealFaceBiometricEngine
@@ -91,6 +93,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var prefs: AppPrefs
     private lateinit var shizuku: ShizukuBridge
     private lateinit var vault: SecurityVault
+    private var engine: AgentEngine? = null
 
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -112,7 +115,9 @@ class MainActivity : ComponentActivity() {
         vault = SecurityVault(this)
         prefs = AppPrefs(this)
         shizuku = ShizukuBridge(this)
+        engine = AgentEngine(this, AiClient(prefs), shizuku)
 
+        AppWhitelistHelper(this, shizuku).ensureBackgroundSurvival()
         requestNeededPermissions()
         startVoiceBackgroundService()
 
@@ -120,6 +125,7 @@ class MainActivity : ComponentActivity() {
             AgentForgeApp(
                 prefs = prefs,
                 shizuku = shizuku,
+                engine = engine,
                 onRequestScreenVision = { requestScreenVisionPermission() }
             )
         }
@@ -216,10 +222,21 @@ fun Modifier.neumorphicCard(cornerRadius: Int = 16): Modifier = this
 fun AgentForgeApp(
     prefs: AppPrefs,
     shizuku: ShizukuBridge,
+    engine: AgentEngine?,
     onRequestScreenVision: () -> Unit
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var isAppUnlocked by remember { mutableStateOf(!prefs.isFaceLockEnabled || !prefs.isFaceEnrolled) }
+
+    // Persistent messages across tab navigation and recreation
+    val persistentMessages = rememberSaveable(
+        saver = listSaver(
+            save = { it.toList() },
+            restore = { it.toMutableStateList() }
+        )
+    ) {
+        mutableStateListOf("${prefs.name}: Cyber & Fluid Orb Core ready. Command boliye.")
+    }
 
     MaterialTheme(
         colorScheme = darkColorScheme(
@@ -255,7 +272,7 @@ fun AgentForgeApp(
             ) { pad ->
                 Box(Modifier.padding(pad).fillMaxSize().background(NeuBackground)) {
                     when (tab) {
-                        0 -> ChatPage(prefs, shizuku)
+                        0 -> ChatPage(prefs, shizuku, engine, persistentMessages)
                         1 -> ApiPage(prefs)
                         2 -> VoicemailPage()
                         3 -> SettingsPage(prefs, shizuku, onRequestScreenVision)
@@ -358,16 +375,22 @@ fun FluidGlowOrb(isActive: Boolean) {
 }
 
 @Composable
-private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
+private fun ChatPage(
+    prefs: AppPrefs,
+    shizuku: ShizukuBridge,
+    engine: AgentEngine?,
+    messages: MutableList<String>
+) {
     val context = LocalContext.current
-    var input by remember { mutableStateOf("") }
+    var input by rememberSaveable { mutableStateOf("") }
     var currentName by remember { mutableStateOf(prefs.name) }
-    var messages by remember { mutableStateOf(listOf("$currentName: Cyber & Fluid Orb Core ready. Command boliye.")) }
     var busy by remember { mutableStateOf(false) }
     var isListeningVoice by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    val engine = remember { AgentEngine(context, AiClient(prefs), shizuku) }
+    val activeEngine = remember(prefs.key, prefs.model) {
+        engine ?: AgentEngine(context, AiClient(prefs), shizuku)
+    }
 
     LaunchedEffect(prefs.name) {
         currentName = prefs.name
@@ -409,7 +432,7 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                 fontSize = 12.sp,
                 modifier = Modifier.padding(end = 8.dp)
             )
-            IconButton(onClick = { messages = emptyList() }) {
+            IconButton(onClick = { messages.clear() }) {
                 Icon(Icons.Default.DeleteSweep, contentDescription = "Clear", tint = Color.Gray)
             }
         }
@@ -494,13 +517,13 @@ private fun ChatPage(prefs: AppPrefs, shizuku: ShizukuBridge) {
                     onClick = {
                         val cmd = input.trim()
                         if (cmd.isNotEmpty()) {
-                            messages = messages + "You: $cmd"
+                            messages.add("You: $cmd")
                             input = ""
                             busy = true
                             scope.launch {
                                 listState.animateScrollToItem(messages.size - 1)
-                                val res = engine.execute(cmd)
-                                messages = messages + "$currentName: $res"
+                                val res = activeEngine.execute(cmd)
+                                messages.add("$currentName: $res")
                                 busy = false
                                 listState.animateScrollToItem(messages.size - 1)
                             }
